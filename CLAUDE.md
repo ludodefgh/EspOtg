@@ -103,6 +103,25 @@ without a reason; it would silently make the build require network access.
   `org.gradle.toolchains.foojay-resolver-convention` plugin to `settings.gradle.kts`
   so Gradle auto-downloads its own JDK per toolchain request, cached under Gradle's
   own toolchain store - no system install, no manual JDK vendoring needed.
+- **AGP 9 has built-in Kotlin support** - do NOT apply `org.jetbrains.kotlin.android`
+  to `com.android.application`/`com.android.library` modules (`app`, `flasher-native`);
+  applying it is now a hard error ("no longer required... remove the plugin").
+  Pure-JVM modules (`flasher-core`) still need `org.jetbrains.kotlin.jvm` as normal.
+  `kotlinx-serialization`/`kotlin.plugin.compose`/KSP plugins are unaffected, keep
+  applying those directly. Configure the compiler via a `kotlin { }` block nested
+  *inside* `android { }` (`compilerOptions { jvmTarget.set(...) }`), not the old
+  `kotlinOptions { jvmTarget = "..." }` from the removed plugin.
+- **`jvmToolchain(21)` must be called explicitly**, even when `compileOptions.
+  sourceCompatibility/targetCompatibility` already say `VERSION_21` - those two
+  alone are just javac `-source`/`-target` flags, they don't request a Gradle
+  toolchain. Without an explicit `jvmToolchain(21)` call inside `android { kotlin
+  { ... } }`, AGP's `compileDebugJavaWithJavac` silently falls back to whichever
+  JVM is running the Gradle daemon itself - the broken JRE here - instead of
+  going through the foojay auto-download path, and fails with "does not provide
+  the required capabilities: [JAVA_COMPILER]". `flasher-core`'s plain `kotlin {
+  jvmToolchain(21) }` didn't have this problem because it already requested a
+  toolchain explicitly; every Android module's `kotlin { }` block needs the same
+  explicit call, not just `compilerOptions`.
 - In `settings.gradle.kts`, a top-level `plugins { }` block **must** come after
   `pluginManagement { }`, not before - Gradle errors immediately (`` `plugins` block
   found. `plugins` cannot appear before `pluginManagement` ``) otherwise.
