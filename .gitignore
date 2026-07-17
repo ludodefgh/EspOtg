@@ -4,10 +4,13 @@ OtherApps/
 ## Android/Gradle
 *.iml
 .gradle/
+.kotlin/
 /local.properties
+/android-sdk/
 /.idea/
 .DS_Store
 /build/
+**/build/
 /captures/
 .externalNativeBuild/
 .cxx/
