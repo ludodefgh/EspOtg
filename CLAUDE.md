@@ -20,6 +20,17 @@ rationale; this file is the living reference for conventions and gotchas.
   code only implements the SLIP/stub-loader protocol and calls back into Kotlin for
   actual byte transfer (see "JNI port design" below).
 - `app/` - Compose UI, Room persistence, real USB handling via usb-serial-for-android.
+  Single shared `AppViewModel` (not one per screen - avoids plumbing
+  `UsbSerialDriver`/`UsbSerialPort` through nav args) drives `connect`/`flash`/
+  `monitor`/`profiles` screens. `FlashEngine` owns one flashing session
+  (connect → per-entry write → verify → reset), exposing `progress`/`logs` flows.
+  `UsbSerialForAndroidTransport` implements flasher-native's `UsbSerialTransport`
+  on a real `UsbSerialPort`; `UsbPortCoordinator` is a plain object singleton
+  arbitrating exclusive port access between flashing and monitoring (deliberately
+  not DI-managed - nothing else here needs a dependency graph yet). Each screen
+  independently opens/closes its own port session rather than sharing one live
+  native handle across screens - simpler lifecycle at the cost of reconnecting
+  once more when going from the Connect identify-pass to actually flashing.
 - `third_party/esp-serial-flasher/` - git **submodule**, pinned to tag `v2.0.0` (not
   `master` - reproducibility). Clone with `git submodule update --init --recursive`
   after a fresh checkout of this repo. Do not edit files inside it.
@@ -133,6 +144,42 @@ without a reason; it would silently make the build require network access.
   which is stale past Jan 2026) - re-check that way, not by guessing, if bumping
   versions later: AGP 9.3.0, Kotlin 2.4.10, KSP 2.3.10, Gradle 9.6.1, Compose BOM
   2026.06.01, Room 2.8.4, compileSdk/targetSdk 36, NDK 28.2.13676358, CMake 3.31.6.
+- **Don't bump `androidx.core:core-ktx`/`androidx.lifecycle:*` past 1.18.0/2.10.0**
+  without also bumping `compileSdk` to 37 - 1.19.0/2.11.0's AAR metadata requires
+  compileSdk 37, which only exists as a beta/canary-channel platform right now
+  (`sdkmanager` needs an explicit channel to install it). Stuck on the older minor
+  versions until API 37 leaves preview, or accept building against a preview SDK.
+- **The manifest namespace URI must be `.../apk/res/android`, not `.../apk/res/auto`.**
+  `res/auto` is for custom-attribute namespaces in resource XML (e.g. layout files
+  referencing a custom view's attrs), not the manifest's `android:` namespace. Using
+  it by copy-paste mistake doesn't error at the XML level - every `android:name`/
+  `android:required`/etc. attribute just silently resolves to nothing, and the
+  manifest merger reports confusing "Missing 'name' key attribute" errors on
+  elements that visibly have that attribute right there in the source.
+- **There's no `Theme.Material.DayNight.*` in the platform.** "DayNight" themes are
+  an AppCompat/MaterialComponents library concept (`Theme.AppCompat.DayNight.*`),
+  not something `android:` framework styles provide at any API level. A pure-Compose
+  app (no AppCompat dependency) needs a plain static framework theme
+  (`android:Theme.Material.NoActionBar` here) as the manifest/pre-Compose theme;
+  actual light/dark switching happens in `EspOtgTheme` via `isSystemInDarkTheme()`.
+- **Material3 1.4.0's `ExposedDropdownMenuBox` API changed shape**: `menuAnchor()`
+  takes `ExposedDropdownMenuAnchorType` (not the old `MenuAnchorType`), and
+  `ExposedDropdownMenu`/`menuAnchor` are members of `ExposedDropdownMenuBoxScope`
+  (the box's trailing-lambda receiver) - not top-level composables to import.
+  Verified by pulling the real `material3-android-1.4.0-sources.jar` from Google's
+  Maven rather than guessing from older tutorials/training-data recall.
+- **`Icons.Default.*`/`Icons.AutoMirrored.Filled.*` need an explicit
+  `androidx.compose.material:material-icons-core` dependency** - it's not pulled in
+  transitively by `material3` alone.
+- **Lint (`MutableImplicitPendingIntent`) rejects a `FLAG_MUTABLE` PendingIntent
+  wrapping an implicit `Intent`** (targeting Android 14+, which `targetSdk 36`
+  does) - fix by making the Intent explicit (`.setPackage(context.packageName)`),
+  keep `FLAG_MUTABLE` since the system needs to write `EXTRA_PERMISSION_GRANTED`
+  into that same Intent when replying to `UsbManager.requestPermission`.
+- `mipmap-anydpi-v26/ic_launcher.xml` needs the `-v26` API qualifier even though
+  `minSdk` is already 26 - lint calls the qualifier "unnecessary" but removing it
+  (`mipmap-anydpi/`) breaks AAPT2 resource resolution (`resource mipmap/ic_launcher
+  not found`). Left the lint warning in place rather than "fixing" it.
 
 ## Repeated commands
 
@@ -143,8 +190,8 @@ without a reason; it would silently make the build require network access.
 # Fast domain-logic tests, no device/emulator:
 ./gradlew :flasher-core:test
 
-# Full build:
-./gradlew assembleDebug lint test
+# Full build (all green as of the initial implementation):
+./gradlew :app:assembleDebug :app:lintDebug test
 
 # After cloning fresh:
 git submodule update --init --recursive

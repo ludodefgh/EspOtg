@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  VID/PID values below are in DECIMAL (Android USB intent-filter convention),
+  converted from the well-known hex IDs of common USB-serial chips. This filter
+  only controls whether the OS offers "Open with EspOtg" on attach - actual
+  device recognition/driver selection is done by usb-serial-for-android at
+  runtime (which detects native CDC-ACM by USB interface class since v3.5, not
+  just by this VID/PID list), see CLAUDE.md.
+-->
+<resources>
+    <!-- Silicon Labs CP210x (0x10C4:0xEA60) -->
+    <usb-device vendor-id="4292" product-id="60000" />
+    <!-- WCH CH340 (0x1A86:0x7523) -->
+    <usb-device vendor-id="6790" product-id="29987" />
+    <!-- WCH CH9102/CH340 variant (0x1A86:0x55D4) -->
+    <usb-device vendor-id="6790" product-id="21972" />
+    <!-- FTDI FT232/FT2232 family (0x0403:0x6001, 0x6010, 0x6015) -->
+    <usb-device vendor-id="1027" product-id="24577" />
+    <usb-device vendor-id="1027" product-id="24592" />
+    <usb-device vendor-id="1027" product-id="24597" />
+    <!-- Prolific PL2303 (0x067B:0x2303) -->
+    <usb-device vendor-id="1659" product-id="8963" />
+    <!-- Espressif native USB (USB-Serial-JTAG on S2/S3/C3/C6...) (0x303A:0x1001) -->
+    <usb-device vendor-id="12346" product-id="4097" />
+</resources>

@@ -1,0 +1,65 @@
+package com.espotg.app.data
+
+import com.espotg.app.data.db.DeviceProfileDao
+import com.espotg.app.data.db.DeviceProfileEntity
+import com.espotg.core.ChipIdentity
+import com.espotg.core.FlashEntry
+import com.espotg.core.FlashOptions
+import com.espotg.core.TargetChip
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+
+data class DeviceProfile(
+    val macAddress: String,
+    val chipType: TargetChip,
+    val usbSerialNumber: String?,
+    val label: String?,
+    val flashOptions: FlashOptions,
+    val flashEntries: List<FlashEntry>,
+    val lastUsedAtEpochMs: Long,
+)
+
+/** Loads/saves the last-used [DeviceProfile] per physical device - see ChipIdentity for the identity model. */
+class DeviceProfileRepository(private val dao: DeviceProfileDao) {
+
+    private val json = Json { ignoreUnknownKeys = true }
+
+    fun observeAll(): Flow<List<DeviceProfile>> = dao.observeAll().map { rows -> rows.map { it.toModel() } }
+
+    /** Looks up by MAC first (source of truth), falling back to the USB serial number hint. */
+    suspend fun findByChipIdentity(identity: ChipIdentity): DeviceProfile? {
+        dao.findByMac(identity.macAddress)?.let { return it.toModel() }
+        val serial = identity.usbSerialNumber ?: return null
+        return dao.findByUsbSerialNumber(serial)?.toModel()
+    }
+
+    /** Pre-connect lookup, before a chip's MAC is known - see ChipIdentity. */
+    suspend fun findByUsbSerialNumber(serial: String): DeviceProfile? = dao.findByUsbSerialNumber(serial)?.toModel()
+
+    suspend fun save(profile: DeviceProfile) = dao.upsert(profile.toEntity())
+
+    suspend fun delete(profile: DeviceProfile) = dao.delete(profile.toEntity())
+
+    private fun DeviceProfileEntity.toModel() = DeviceProfile(
+        macAddress = macAddress,
+        chipType = TargetChip.valueOf(chipType),
+        usbSerialNumber = usbSerialNumber,
+        label = label,
+        flashOptions = json.decodeFromString<FlashOptions>(lastFlashOptionsJson),
+        flashEntries = json.decodeFromString<List<FlashEntry>>(lastEntriesJson),
+        lastUsedAtEpochMs = lastUsedAtEpochMs,
+    )
+
+    private fun DeviceProfile.toEntity() = DeviceProfileEntity(
+        macAddress = macAddress,
+        chipType = chipType.name,
+        usbSerialNumber = usbSerialNumber,
+        label = label,
+        lastFlashOptionsJson = json.encodeToString(flashOptions),
+        lastEntriesJson = json.encodeToString(flashEntries),
+        lastUsedAtEpochMs = lastUsedAtEpochMs,
+    )
+}

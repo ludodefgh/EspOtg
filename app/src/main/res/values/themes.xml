@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Framework has no "DayNight" theme (that's an AppCompat concept, not used here -
+      this app is pure Compose). Light/dark switching happens in EspOtgTheme; this is
+      just the brief pre-Compose window background theme.
+    -->
+    <style name="Theme.EspOtg" parent="android:Theme.Material.NoActionBar" />
+</resources>
