@@ -181,6 +181,19 @@ without a reason; it would silently make the build require network access.
   (`mipmap-anydpi/`) breaks AAPT2 resource resolution (`resource mipmap/ic_launcher
   not found`). Left the lint warning in place rather than "fixing" it.
 
+## Release signing
+
+A release keystore exists locally on the dev machine, kept **outside this repo**
+(never commit a keystore), and the 4 secrets it needs
+(`KEYSTORE_BASE64`/`KEYSTORE_PASSWORD`/`KEY_ALIAS`/`KEY_PASSWORD`) are already set
+on the GitHub repo, so `.github/workflows/android-release.yml` is ready to produce
+a signed APK the moment a `v*` tag is pushed - verified end-to-end with a local
+`:app:assembleRelease` using the same env vars CI uses, R8/shrink-resources
+included, signature confirmed via `apksigner verify`. Deliberately no `v0.1.0` tag
+pushed yet: the actual "does it flash a real chip" milestone hasn't happened, and
+cutting a release before that would just be premature. Ask before pushing a
+release tag even though the infra is ready - that's a visible, public action.
+
 ## Repeated commands
 
 ```bash
