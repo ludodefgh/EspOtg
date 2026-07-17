@@ -1,0 +1,24 @@
+## Reverse-engineering material for competing apps, not part of this project's source
+OtherApps/
+
+## Android/Gradle
+*.iml
+.gradle/
+/local.properties
+/.idea/
+.DS_Store
+/build/
+/captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.ap_
+*.dex
+
+## Keystores
+*.jks
+*.keystore
+
+## Log/temp
+*.log
