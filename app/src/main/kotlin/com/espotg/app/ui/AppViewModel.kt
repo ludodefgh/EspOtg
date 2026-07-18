@@ -74,7 +74,18 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshDevices() = usbRepository.refresh()
 
-    /** Requests permission, does a quick chip/MAC identify pass, and loads any saved profile for that device. */
+    private val _autoBootloaderReset = MutableStateFlow(true)
+    val autoBootloaderReset: StateFlow<Boolean> = _autoBootloaderReset
+
+    fun setAutoBootloaderReset(enabled: Boolean) {
+        _autoBootloaderReset.value = enabled
+    }
+
+    /**
+     * Requests permission, does a quick chip/MAC identify pass, and loads any
+     * saved profile for that device. When [autoBootloaderReset] is off, the user
+     * is expected to have already put the chip in download mode manually.
+     */
     fun connectAndIdentify(driver: UsbSerialDriver) {
         _selectedDriver.value = driver
         _connectionStatus.value = ConnectionStatus.RequestingPermission
@@ -91,7 +102,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
             _connectionStatus.value = ConnectionStatus.Identifying
             try {
-                val identity = withContext(Dispatchers.IO) { flashEngine.identify(driver) }
+                val identity = withContext(Dispatchers.IO) {
+                    flashEngine.identify(driver, autoReset = _autoBootloaderReset.value)
+                }
                 val loadedProfile = profileRepository.findByChipIdentity(identity)?.also { applyProfile(it) } != null
                 _connectionStatus.value = ConnectionStatus.Identified(identity, loadedProfile)
             } catch (e: Exception) {

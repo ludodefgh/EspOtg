@@ -1,6 +1,7 @@
 package com.espotg.app.ui.connect
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -17,6 +18,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -45,6 +47,7 @@ fun ConnectScreen(
 ) {
     val drivers by appViewModel.usbRepository.availableDrivers.collectAsStateWithLifecycle()
     val status by appViewModel.connectionStatus.collectAsStateWithLifecycle()
+    val autoReset by appViewModel.autoBootloaderReset.collectAsStateWithLifecycle()
     val logs = remember { mutableStateListOf<LogLine>() }
 
     LaunchedEffect(Unit) { appViewModel.refreshDevices() }
@@ -85,6 +88,23 @@ fun ConnectScreen(
                         DeviceRow(driver, onClick = { appViewModel.connectAndIdentify(driver) })
                     }
                 }
+            }
+
+            Spacer(Modifier.height(16.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Auto bootloader reset")
+                Switch(checked = autoReset, onCheckedChange = { appViewModel.setAutoBootloaderReset(it) })
+            }
+            if (!autoReset) {
+                Text(
+                    "Hold BOOT, tap RESET, release BOOT, then tap the device above to connect.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
 
             Spacer(Modifier.height(16.dp))

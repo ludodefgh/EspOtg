@@ -54,10 +54,11 @@ class FlashEngine(private val usbRepository: UsbDeviceRepository) {
      * repository's suspend reconnect logic via [runBlocking] - safe here since
      * every caller of this already runs on Dispatchers.IO, off the main thread.
      */
-    private fun openTransport(driver: UsbSerialDriver): UsbSerialForAndroidTransport {
+    private fun openTransport(driver: UsbSerialDriver, autoReset: Boolean): UsbSerialForAndroidTransport {
         val port = usbRepository.openPort(driver)
         return UsbSerialForAndroidTransport(
             initialPort = port,
+            autoReset = autoReset,
             reopenPort = {
                 runBlocking {
                     usbRepository.waitAndReopenAfterReset(
@@ -71,9 +72,16 @@ class FlashEngine(private val usbRepository: UsbDeviceRepository) {
         )
     }
 
-    /** Quick connect + chip/MAC identification, no flashing - used to resolve a saved profile before committing to a plan. */
-    suspend fun identify(driver: UsbSerialDriver, syncBaudRate: Int = 115_200): ChipIdentity {
-        val transport = openTransport(driver)
+    /**
+     * Quick connect + chip/MAC identification, no flashing - used to resolve a
+     * saved profile before committing to a plan. When [autoReset] is false, the
+     * caller is expected to have already put the chip in download mode manually
+     * (hold BOOT, tap RESET, release BOOT) - useful when a board's firmware
+     * doesn't support DTR/RTS-triggered auto-reset (seen on native
+     * USB-Serial-JTAG boards whose current firmware doesn't implement it).
+     */
+    suspend fun identify(driver: UsbSerialDriver, syncBaudRate: Int = 115_200, autoReset: Boolean = true): ChipIdentity {
+        val transport = openTransport(driver, autoReset)
         transport.setBaudRate(syncBaudRate)
         val loader = EspLoaderNative(transport) { level, message -> log(level, message) }
         try {
@@ -97,7 +105,7 @@ class FlashEngine(private val usbRepository: UsbDeviceRepository) {
             isRunning = true,
         )
 
-        val transport = openTransport(driver)
+        val transport = openTransport(driver, plan.options.autoBootloaderReset)
         transport.setBaudRate(plan.options.syncBaudRate)
         val loader = EspLoaderNative(transport) { level, message -> log(level, message) }
         try {

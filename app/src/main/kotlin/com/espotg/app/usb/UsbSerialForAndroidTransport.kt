@@ -26,6 +26,7 @@ import java.io.IOException
  */
 class UsbSerialForAndroidTransport(
     initialPort: UsbSerialPort,
+    private val autoReset: Boolean = true,
     private val reopenPort: (() -> UsbSerialPort)? = null,
     private val logger: ((String) -> Unit)? = null,
 ) : UsbSerialTransport {
@@ -71,6 +72,10 @@ class UsbSerialForAndroidTransport(
         }
 
     override fun enterBootloader() {
+        if (!autoReset) {
+            logger?.invoke("Auto bootloader reset disabled - assuming BOOT/RESET were pressed manually")
+            return
+        }
         if (isNativeUsbJtag) enterBootloaderUsbJtag() else enterBootloaderClassic()
     }
 
