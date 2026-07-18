@@ -214,6 +214,17 @@ each step eliminated a plausible-but-wrong hypothesis:
   later as a generic SYNC timeout. Anything that can fail inside those callbacks
   must log through its own side channel (the `logger` param on
   UsbSerialForAndroidTransport); never assume a silent enter_bootloader worked.
+- **Avoid `@JvmInline value class` in the release-build flash path.** The first
+  flash attempt that got past SYNC/stub/baud-change on real hardware died with
+  `ClassCastException: a != java.lang.Long` (minified name) the moment
+  `HexOffset.value` was read - R8's optimization of inline-class boxing was the
+  prime suspect (only Long-wrapping value class on that path; debug builds
+  unaffected). HexOffset is now a plain data class; don't reintroduce value
+  classes into serialized/JNI-adjacent model types without testing the *minified
+  release* build on-device, not just debug. Related hygiene added at the same
+  time: `-keepattributes SourceFile,LineNumberTable` in app/proguard-rules.pro +
+  FlashEngine logging `stackTraceToString()` on failure, so future release-only
+  crashes are locatable from a user's log paste instead of an opaque one-liner.
 
 ## Release signing
 

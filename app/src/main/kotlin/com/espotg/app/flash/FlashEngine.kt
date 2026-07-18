@@ -139,6 +139,11 @@ class FlashEngine(private val usbRepository: UsbDeviceRepository) {
             return ChipIdentity(macAddress = mac, chipType = chipType)
         } catch (e: Exception) {
             log(LogLevel.ERROR, "Flash failed: ${e.message}")
+            // Full trace in the log too: on minified release builds the message
+            // alone can be an opaque "a != java.lang.Long"-style string, and the
+            // trace (with LineNumberTable kept, see proguard-rules.pro) is the
+            // only way to locate the failure from a user report.
+            log(LogLevel.DEBUG, e.stackTraceToString())
             throw e
         } finally {
             loader.close()

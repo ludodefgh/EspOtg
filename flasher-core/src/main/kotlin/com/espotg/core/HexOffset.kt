@@ -8,10 +8,16 @@ import kotlinx.serialization.Serializable
  * Users type offsets freely (e.g. "0x1000", "1000", "0X8000") instead of picking
  * from a fixed dropdown of presets - presets are offered as suggestions that just
  * fill this same free-text field.
+ *
+ * Deliberately a regular data class, NOT a `@JvmInline value class`: the first
+ * on-device release build failed with an obfuscated `ClassCastException:
+ * a != java.lang.Long` the moment `offset.value` was read in the flash loop -
+ * R8's aggressive optimization of inline-class boxing (this was the only
+ * Long-wrapping value class on that code path) is the prime suspect, and the
+ * negligible allocation win isn't worth fighting it.
  */
 @Serializable
-@JvmInline
-value class HexOffset private constructor(val value: Long) {
+data class HexOffset private constructor(val value: Long) {
 
     fun toHexString(): String = "0x%X".format(value)
 
