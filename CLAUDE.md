@@ -229,6 +229,14 @@ each step eliminated a plausible-but-wrong hypothesis:
   templates or pass them as format *arguments*, never into the format string
   itself. The two remaining `.format()` calls (toMacString, toHexString) use
   literal format strings and are fine.
+- **Do not put a `USB_DEVICE_ATTACHED` intent-filter on the launcher activity.**
+  It makes the system repeatedly yank the app back to the foreground while a
+  matching device stays plugged in (blatant on Samsung/One UI - you can't stay
+  in another app). Removed from MainActivity; runtime enumeration
+  (`UsbSerialProber` in UsbDeviceRepository) + self-managed permission cover
+  everything except "open with EspOtg on plug", which - if ever wanted back -
+  must live on a dedicated trampoline activity (noHistory/excludeFromRecents),
+  never the main one. res/xml/device_filter.xml is kept, unreferenced, for that.
 - Release-only crash hygiene (added during the above): `-keepattributes
   SourceFile,LineNumberTable` in app/proguard-rules.pro + FlashEngine logging
   `stackTraceToString()` on failure - keep both; the r8-map-id frames in a

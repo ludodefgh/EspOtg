@@ -9,6 +9,18 @@
         android:theme="@style/Theme.EspOtg"
         android:supportsRtl="true">
 
+        <!--
+          No USB_DEVICE_ATTACHED intent-filter here on purpose. Declaring it on
+          the launcher activity makes the system repeatedly pull the app back to
+          the foreground while a matching device stays plugged in (very visible on
+          Samsung/One UI): you can't switch to another app without it stealing
+          focus. We don't need it - the app enumerates devices at runtime
+          (UsbSerialProber in UsbDeviceRepository) and requests permission itself.
+          The only thing lost is "open with EspOtg" on plug-in; if we want that
+          back later, it must go on a dedicated trampoline activity (noHistory /
+          excludeFromRecents), never on this one. res/xml/device_filter.xml is
+          kept for that future use.
+        -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -18,12 +30,6 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <intent-filter>
-                <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
-            </intent-filter>
-            <meta-data
-                android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
-                android:resource="@xml/device_filter" />
         </activity>
     </application>
 </manifest>
