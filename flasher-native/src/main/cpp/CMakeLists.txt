@@ -2,6 +2,11 @@ cmake_minimum_required(VERSION 3.22)
 project(flasher_native C)
 
 set(PORT "USER_DEFINED" CACHE STRING "" FORCE)
+# Verbose protocol-level logging (SYNC attempts, raw response bytes, etc.) while
+# real-hardware bring-up is still in progress - the C library's own LOADER_LOGx
+# calls route through android_log -> onNativeLog -> FlashEngine.logs, same as
+# everything else. Dial back to WARN once flashing is confirmed working.
+set(SERIAL_FLASHER_LOG_LEVEL "DEBUG" CACHE STRING "" FORCE)
 
 set(REPO_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../../../..)
 add_subdirectory(${REPO_ROOT}/third_party/esp-serial-flasher

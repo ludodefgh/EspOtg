@@ -122,6 +122,11 @@ class UsbSerialForAndroidTransport(
                 currentPort = newPort
                 logger?.invoke("USB device reopened after reset")
                 lastBaudRate?.let { setBaudRate(it) }
+                // The endpoints on a just-opened CDC-ACM connection aren't
+                // necessarily ready to transfer immediately; a short settle
+                // delay avoids racing the SYNC handshake that follows right
+                // after enterBootloader() returns.
+                Thread.sleep(PORT_SETTLE_TIME_MS)
             }
             .onFailure { e ->
                 logger?.invoke("Failed to reopen USB device after reset: ${e.message} - subsequent SYNC will time out")
@@ -144,6 +149,7 @@ class UsbSerialForAndroidTransport(
         /** Matches esp-serial-flasher's SERIAL_FLASHER_RESET_HOLD_TIME_MS/BOOT_HOLD_TIME_MS defaults. */
         const val RESET_HOLD_TIME_MS = 100L
         const val BOOT_HOLD_TIME_MS = 50L
+        const val PORT_SETTLE_TIME_MS = 300L
 
         /** Matches ESPRESSIF_USB_JTAG_VID/PID in third_party/esp-serial-flasher/port/linux_port.c. */
         const val ESPRESSIF_USB_JTAG_VID = 0x303A

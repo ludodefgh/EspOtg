@@ -183,6 +183,32 @@ static void android_log(esp_loader_port_t *base, esp_loader_log_level_t level, c
     check_and_clear_exception(env, "onNativeLog");
 }
 
+/* Formats as "<label>: XX XX XX ..." and forwards through the same onNativeLog
+ * callback as android_log() - useful while debugging the SYNC handshake at
+ * SERIAL_FLASHER_LOG_LEVEL=DEBUG to see whether bytes are actually being
+ * exchanged with the target at all. */
+static void android_log_hex(esp_loader_port_t *base, esp_loader_log_level_t level,
+                             const char *label, const uint8_t *data, size_t size) {
+    android_port_t *p = container_of(base, android_port_t, base);
+    JNIEnv *env = p->env;
+
+    char buf[512];
+    int offset = snprintf(buf, sizeof(buf), "%s:", (label != NULL) ? label : "hex");
+    size_t max_bytes = (sizeof(buf) - (size_t) offset) / 3;
+    size_t show = (size < max_bytes) ? size : max_bytes;
+    for (size_t i = 0; i < show && offset < (int) sizeof(buf) - 4; i++) {
+        offset += snprintf(buf + offset, sizeof(buf) - (size_t) offset, " %02X", data[i]);
+    }
+    if (show < size) {
+        snprintf(buf + offset, sizeof(buf) - (size_t) offset, " ... (%zu bytes total)", size);
+    }
+
+    jstring message = (*env)->NewStringUTF(env, buf);
+    (*env)->CallVoidMethod(env, p->callback_obj, p->m_log, (jint) level, message);
+    (*env)->DeleteLocalRef(env, message);
+    check_and_clear_exception(env, "onNativeLog(hex)");
+}
+
 const esp_loader_port_ops_t android_port_ops = {
     .init = NULL,
     .deinit = NULL,
@@ -192,7 +218,7 @@ const esp_loader_port_ops_t android_port_ops = {
     .remaining_time = android_remaining_time,
     .delay_ms = android_delay_ms,
     .log = android_log,
-    .log_hex = NULL, /* hex dumps suppressed for v1; `log` alone feeds the live log console */
+    .log_hex = android_log_hex,
     .change_transmission_rate = android_change_transmission_rate,
     .write = android_write,
     .read = android_read,
