@@ -60,6 +60,24 @@ void android_port_destroy(JNIEnv *env, android_port_t *port) {
     free(port);
 }
 
+/* Ad-hoc diagnostic logging for the raw transport calls themselves (as opposed
+ * to protocol-level LOADER_LOG_HEX in slip.c, which only fires on a fully
+ * decoded packet) - temporary, while native-USB-JTAG bring-up is in progress,
+ * to see whether onNativeRead/onNativeWrite ever return anything at all. */
+static void android_log_transport(android_port_t *p, const char *fmt, ...) {
+    JNIEnv *env = p->env;
+    char buf[192];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, args);
+    va_end(args);
+
+    jstring message = (*env)->NewStringUTF(env, buf);
+    (*env)->CallVoidMethod(env, p->callback_obj, p->m_log, (jint) ESP_LOADER_LOG_DEBUG, message);
+    (*env)->DeleteLocalRef(env, message);
+    check_and_clear_exception(env, "onNativeLog(transport)");
+}
+
 static esp_loader_error_t android_write(esp_loader_port_t *base, const uint8_t *data, uint16_t size, uint32_t timeout_ms) {
     android_port_t *p = container_of(base, android_port_t, base);
     JNIEnv *env = p->env;
@@ -78,6 +96,7 @@ static esp_loader_error_t android_write(esp_loader_port_t *base, const uint8_t *
 
         jint n = (*env)->CallIntMethod(env, p->callback_obj, p->m_write, buf, chunk_size, (jint) remaining);
         (*env)->DeleteLocalRef(env, buf);
+        android_log_transport(p, "write(req=%d, timeout=%dms) -> %d", (int) chunk_size, (int) remaining, (int) n);
 
         if (check_and_clear_exception(env, "onNativeWrite")) {
             return ESP_LOADER_ERROR_FAIL;
@@ -107,6 +126,7 @@ static esp_loader_error_t android_read(esp_loader_port_t *base, uint8_t *data, u
         jbyteArray buf = (*env)->NewByteArray(env, chunk_size);
 
         jint n = (*env)->CallIntMethod(env, p->callback_obj, p->m_read, buf, chunk_size, (jint) remaining);
+        android_log_transport(p, "read(req=%d, timeout=%dms) -> %d", (int) chunk_size, (int) remaining, (int) n);
 
         if (check_and_clear_exception(env, "onNativeRead")) {
             (*env)->DeleteLocalRef(env, buf);
