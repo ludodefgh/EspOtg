@@ -29,9 +29,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -47,7 +45,6 @@ import com.espotg.core.FlashEntry
 import com.espotg.core.FlashEntryProgress
 import com.espotg.core.FlashStepState
 import com.espotg.core.HexOffset
-import com.espotg.core.LogLine
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -56,11 +53,7 @@ fun FlashScreen(appViewModel: AppViewModel, onOpenMonitor: () -> Unit) {
     val flashRunning by appViewModel.flashRunning.collectAsStateWithLifecycle()
     val progress by appViewModel.flashEngine.progress.collectAsStateWithLifecycle()
     var showOptions by remember { mutableStateOf(false) }
-    val logs = remember { mutableStateListOf<LogLine>() }
-
-    LaunchedEffect(Unit) {
-        appViewModel.flashEngine.logs.collect { logs.add(it) }
-    }
+    val logs by appViewModel.sessionLogs.collectAsStateWithLifecycle()
 
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         uris.forEach { appViewModel.addBinary(it) }
@@ -127,7 +120,7 @@ fun FlashScreen(appViewModel: AppViewModel, onOpenMonitor: () -> Unit) {
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text("Flash log", style = MaterialTheme.typography.titleSmall)
-                    TextButton(onClick = { logs.clear() }) { Text("Clear") }
+                    TextButton(onClick = { appViewModel.clearSessionLogs() }) { Text("Clear") }
                 }
             }
             LogConsole(lines = logs, modifier = Modifier.weight(1f).fillMaxWidth())

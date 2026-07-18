@@ -5,6 +5,7 @@ import androidx.core.net.toUri
 import com.espotg.app.usb.UsbDeviceRepository
 import com.espotg.app.usb.UsbSerialForAndroidTransport
 import com.espotg.core.ChipIdentity
+import com.espotg.core.EspImageHeader
 import com.espotg.core.FlashEntryProgress
 import com.espotg.core.FlashOptions
 import com.espotg.core.FlashPlan
@@ -90,7 +91,16 @@ class FlashEngine(private val usbRepository: UsbDeviceRepository) {
             val chipType = loader.getTargetChip()
             val mac = loader.readMac().toMacString()
             log(LogLevel.INFO, "Connected - $chipType, MAC $mac")
-            loader.resetTarget()
+            if (autoReset) {
+                loader.resetTarget()
+            } else {
+                // Manual bootloader entry: leave the chip sitting in the ROM
+                // bootloader so the flash that typically follows can connect
+                // without the user having to redo the BOOT+RESET dance. A reset
+                // here would boot it back into its firmware and guarantee the
+                // next SYNC times out.
+                log(LogLevel.INFO, "Staying in bootloader (manual mode) - ready to flash")
+            }
             return ChipIdentity(macAddress = mac, chipType = chipType)
         } finally {
             loader.close()
@@ -149,8 +159,16 @@ class FlashEngine(private val usbRepository: UsbDeviceRepository) {
         updateEntry(entryId) { it.copy(state = FlashStepState.WRITING) }
         log(LogLevel.INFO, "Flashing ${uri.substringAfterLast('/')} @ 0x%X".format(offset))
 
-        val data = context.contentResolver.openInputStream(uri.toUri())?.use { it.readBytes() }
+        val rawData = context.contentResolver.openInputStream(uri.toUri())?.use { it.readBytes() }
             ?: throw IOException("Cannot open $uri")
+
+        // esptool-style header patch: only applies when the file is an ESP image
+        // (0xE9 magic) AND at least one SPI option is set to something other than
+        // KEEP - the compiled-in header values win by default.
+        val data = EspImageHeader.patch(rawData, options.spiMode, options.spiFreq, options.flashSize)
+        if (data !== rawData) {
+            log(LogLevel.INFO, "Patched image header SPI settings (mode=${options.spiMode}, freq=${options.spiFreq.label}, size=${options.flashSize.label})")
+        }
 
         if (options.compression) {
             flashCompressed(loader, entryId, offset, data)

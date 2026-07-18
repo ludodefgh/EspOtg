@@ -18,6 +18,8 @@ import com.espotg.core.FlashEntry
 import com.espotg.core.FlashOptions
 import com.espotg.core.FlashPlan
 import com.espotg.core.HexOffset
+import com.espotg.core.LogLevel
+import com.espotg.core.LogLine
 import com.espotg.core.OffsetPresets
 import com.espotg.core.TargetChip
 import com.hoho.android.usbserial.driver.UsbSerialDriver
@@ -53,6 +55,33 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val profileRepository = DeviceProfileRepository(EspOtgDatabase.getInstance(application).deviceProfileDao())
     val flashEngine = FlashEngine(usbRepository)
 
+    /**
+     * Session-scoped log buffer, shared by every screen (Connect/Flash both
+     * render it) - lives as long as the device session, survives navigation,
+     * cleared only when a different device is selected or explicitly via
+     * [clearSessionLogs]. Previously each screen collected flashEngine.logs
+     * into its own local buffer, so logs emitted while another screen was
+     * displayed were simply lost.
+     */
+    private val _sessionLogs = MutableStateFlow<List<LogLine>>(emptyList())
+    val sessionLogs: StateFlow<List<LogLine>> = _sessionLogs
+
+    init {
+        viewModelScope.launch {
+            flashEngine.logs.collect { line ->
+                _sessionLogs.update { it + line }
+            }
+        }
+    }
+
+    fun clearSessionLogs() {
+        _sessionLogs.value = emptyList()
+    }
+
+    private fun logToSession(message: String) {
+        _sessionLogs.update { it + LogLine(System.currentTimeMillis(), LogLevel.WARN, message) }
+    }
+
     private val _selectedDriver = MutableStateFlow<UsbSerialDriver?>(null)
     val selectedDriver: StateFlow<UsbSerialDriver?> = _selectedDriver
 
@@ -87,6 +116,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
      * is expected to have already put the chip in download mode manually.
      */
     fun connectAndIdentify(driver: UsbSerialDriver) {
+        if (_selectedDriver.value?.device?.deviceId != driver.device.deviceId) {
+            clearSessionLogs()
+        }
         _selectedDriver.value = driver
         _connectionStatus.value = ConnectionStatus.RequestingPermission
         viewModelScope.launch {
@@ -163,10 +195,19 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun startFlash() {
-        val driver = _selectedDriver.value ?: return
+        val driver = _selectedDriver.value ?: run {
+            logToSession("Cannot flash: no USB device selected")
+            return
+        }
         val plan = _currentPlan.value
-        if (plan.entries.isEmpty()) return
-        if (!UsbPortCoordinator.tryAcquire(PortOccupant.FLASHER)) return
+        if (plan.entries.isEmpty()) {
+            logToSession("Cannot flash: no binaries in the queue")
+            return
+        }
+        if (!UsbPortCoordinator.tryAcquire(PortOccupant.FLASHER)) {
+            logToSession("Cannot flash: serial port is busy (stop the monitor first)")
+            return
+        }
 
         _flashRunning.value = true
         viewModelScope.launch(Dispatchers.IO) {

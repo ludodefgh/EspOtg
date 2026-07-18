@@ -25,8 +25,6 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -35,7 +33,6 @@ import com.espotg.app.BuildConfig
 import com.espotg.app.ui.AppViewModel
 import com.espotg.app.ui.ConnectionStatus
 import com.espotg.app.ui.components.LogConsole
-import com.espotg.core.LogLine
 import com.hoho.android.usbserial.driver.UsbSerialDriver
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -49,14 +46,11 @@ fun ConnectScreen(
     val drivers by appViewModel.usbRepository.availableDrivers.collectAsStateWithLifecycle()
     val status by appViewModel.connectionStatus.collectAsStateWithLifecycle()
     val autoReset by appViewModel.autoBootloaderReset.collectAsStateWithLifecycle()
-    val logs = remember { mutableStateListOf<LogLine>() }
+    val logs by appViewModel.sessionLogs.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) { appViewModel.refreshDevices() }
     LaunchedEffect(status) {
         if (status is ConnectionStatus.Identified) onConnected()
-    }
-    LaunchedEffect(Unit) {
-        appViewModel.flashEngine.logs.collect { logs.add(it) }
     }
 
     Scaffold(
@@ -138,7 +132,7 @@ fun ConnectScreen(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text("Connection log", style = MaterialTheme.typography.titleSmall)
-                    TextButton(onClick = { logs.clear() }) { Text("Clear") }
+                    TextButton(onClick = { appViewModel.clearSessionLogs() }) { Text("Clear") }
                 }
                 LogConsole(lines = logs, modifier = Modifier.weight(1f).fillMaxWidth())
             }

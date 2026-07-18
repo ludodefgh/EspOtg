@@ -44,7 +44,7 @@ fun FlashOptionsPanel(
             label = "SPI mode",
             options = SpiMode.entries,
             selected = options.spiMode,
-            labelFor = { it.name },
+            labelFor = { if (it == SpiMode.KEEP) "keep (from image)" else it.name },
             onSelect = { v -> onOptionsChange { it.copy(spiMode = v) } },
             modifier = Modifier.fillMaxWidth(),
         )
@@ -53,7 +53,7 @@ fun FlashOptionsPanel(
             label = "SPI frequency",
             options = SpiFreq.entries,
             selected = options.spiFreq,
-            labelFor = { "${it.mhz} MHz" },
+            labelFor = { it.label },
             onSelect = { v -> onOptionsChange { it.copy(spiFreq = v) } },
             modifier = Modifier.fillMaxWidth(),
         )
