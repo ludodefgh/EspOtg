@@ -51,7 +51,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     val usbRepository = UsbDeviceRepository(application)
     val profileRepository = DeviceProfileRepository(EspOtgDatabase.getInstance(application).deviceProfileDao())
-    val flashEngine = FlashEngine()
+    val flashEngine = FlashEngine(usbRepository)
 
     private val _selectedDriver = MutableStateFlow<UsbSerialDriver?>(null)
     val selectedDriver: StateFlow<UsbSerialDriver?> = _selectedDriver
@@ -91,14 +91,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
             _connectionStatus.value = ConnectionStatus.Identifying
             try {
-                val identity = withContext(Dispatchers.IO) {
-                    val port = usbRepository.openPort(driver)
-                    try {
-                        flashEngine.identify(port)
-                    } finally {
-                        runCatching { port.close() }
-                    }
-                }
+                val identity = withContext(Dispatchers.IO) { flashEngine.identify(driver) }
                 val loadedProfile = profileRepository.findByChipIdentity(identity)?.also { applyProfile(it) } != null
                 _connectionStatus.value = ConnectionStatus.Identified(identity, loadedProfile)
             } catch (e: Exception) {
@@ -165,24 +158,19 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         _flashRunning.value = true
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val port = usbRepository.openPort(driver)
-                try {
-                    val identity = flashEngine.runFlashPlan(getApplication(), port, plan)
-                    profileRepository.save(
-                        DeviceProfile(
-                            macAddress = identity.macAddress,
-                            chipType = identity.chipType,
-                            usbSerialNumber = usbRepository.readUsbSerialNumber(driver.device),
-                            label = null,
-                            flashOptions = plan.options,
-                            flashEntries = plan.entries,
-                            lastUsedAtEpochMs = System.currentTimeMillis(),
-                        ),
-                    )
-                    _connectionStatus.value = ConnectionStatus.Identified(identity, loadedProfile = true)
-                } finally {
-                    runCatching { port.close() }
-                }
+                val identity = flashEngine.runFlashPlan(getApplication(), driver, plan)
+                profileRepository.save(
+                    DeviceProfile(
+                        macAddress = identity.macAddress,
+                        chipType = identity.chipType,
+                        usbSerialNumber = usbRepository.readUsbSerialNumber(driver.device),
+                        label = null,
+                        flashOptions = plan.options,
+                        flashEntries = plan.entries,
+                        lastUsedAtEpochMs = System.currentTimeMillis(),
+                    ),
+                )
+                _connectionStatus.value = ConnectionStatus.Identified(identity, loadedProfile = true)
             } catch (_: Exception) {
                 // Already surfaced via flashEngine.logs; nothing further to do here.
             } finally {

@@ -2,6 +2,7 @@ package com.espotg.app.flash
 
 import android.content.Context
 import androidx.core.net.toUri
+import com.espotg.app.usb.UsbDeviceRepository
 import com.espotg.app.usb.UsbSerialForAndroidTransport
 import com.espotg.core.ChipIdentity
 import com.espotg.core.FlashEntryProgress
@@ -12,7 +13,7 @@ import com.espotg.core.FlashStepState
 import com.espotg.core.LogLevel
 import com.espotg.core.LogLine
 import com.espotg.flasher.EspLoaderNative
-import com.hoho.android.usbserial.driver.UsbSerialPort
+import com.hoho.android.usbserial.driver.UsbSerialDriver
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.security.MessageDigest
@@ -22,14 +23,15 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.runBlocking
 
 /**
- * Orchestrates one flashing (or identify-only) session on an already-opened
- * [UsbSerialPort]: wires it into [EspLoaderNative] via [UsbSerialForAndroidTransport],
- * drives the connect/flash/verify sequence, and streams progress + live logs to
- * the UI. One instance per session - not reused across ports.
+ * Orchestrates one flashing (or identify-only) session: opens the driver's port,
+ * wires it into [EspLoaderNative] via [UsbSerialForAndroidTransport], drives the
+ * connect/flash/verify sequence, and streams progress + live logs to the UI. One
+ * instance per session - not reused across drivers.
  */
-class FlashEngine {
+class FlashEngine(private val usbRepository: UsbDeviceRepository) {
 
     private val _logs = MutableSharedFlow<LogLine>(replay = 0, extraBufferCapacity = 512)
     val logs: SharedFlow<LogLine> = _logs
@@ -45,9 +47,28 @@ class FlashEngine {
         _progress.update { p -> p.copy(entries = p.entries.map { if (it.entryId == id) transform(it) else it }) }
     }
 
+    /**
+     * Opens [driver]'s port and wraps it in a transport that knows how to reopen
+     * itself after a native USB-Serial-JTAG reset re-enumeration (see
+     * [UsbSerialForAndroidTransport]). The `reopenPort` lambda bridges to the
+     * repository's suspend reconnect logic via [runBlocking] - safe here since
+     * every caller of this already runs on Dispatchers.IO, off the main thread.
+     */
+    private fun openTransport(driver: UsbSerialDriver): UsbSerialForAndroidTransport {
+        val port = usbRepository.openPort(driver)
+        return UsbSerialForAndroidTransport(
+            initialPort = port,
+            reopenPort = {
+                runBlocking {
+                    usbRepository.waitAndReopenAfterReset(driver.device.vendorId, driver.device.productId)
+                }
+            },
+        )
+    }
+
     /** Quick connect + chip/MAC identification, no flashing - used to resolve a saved profile before committing to a plan. */
-    suspend fun identify(port: UsbSerialPort, syncBaudRate: Int = 115_200): ChipIdentity {
-        val transport = UsbSerialForAndroidTransport(port)
+    suspend fun identify(driver: UsbSerialDriver, syncBaudRate: Int = 115_200): ChipIdentity {
+        val transport = openTransport(driver)
         transport.setBaudRate(syncBaudRate)
         val loader = EspLoaderNative(transport) { level, message -> log(level, message) }
         try {
@@ -60,17 +81,18 @@ class FlashEngine {
             return ChipIdentity(macAddress = mac, chipType = chipType)
         } finally {
             loader.close()
+            transport.closeCurrentPort()
         }
     }
 
     /** Runs the full flash plan (one or more binaries) and returns the identity of the chip that was flashed. */
-    suspend fun runFlashPlan(context: Context, port: UsbSerialPort, plan: FlashPlan): ChipIdentity {
+    suspend fun runFlashPlan(context: Context, driver: UsbSerialDriver, plan: FlashPlan): ChipIdentity {
         _progress.value = FlashProgress(
             entries = plan.entries.map { FlashEntryProgress(it.id, FlashStepState.PENDING, totalBytes = it.sizeBytes) },
             isRunning = true,
         )
 
-        val transport = UsbSerialForAndroidTransport(port)
+        val transport = openTransport(driver)
         transport.setBaudRate(plan.options.syncBaudRate)
         val loader = EspLoaderNative(transport) { level, message -> log(level, message) }
         try {
@@ -97,6 +119,7 @@ class FlashEngine {
             throw e
         } finally {
             loader.close()
+            transport.closeCurrentPort()
             _progress.update { it.copy(isRunning = false) }
         }
     }

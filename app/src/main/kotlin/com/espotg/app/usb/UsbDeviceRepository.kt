@@ -12,6 +12,7 @@ import com.hoho.android.usbserial.driver.UsbSerialDriver
 import com.hoho.android.usbserial.driver.UsbSerialPort
 import com.hoho.android.usbserial.driver.UsbSerialProber
 import java.io.IOException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -98,5 +99,32 @@ class UsbDeviceRepository(private val context: Context) {
         val port = driver.ports.first()
         port.open(connection)
         return port
+    }
+
+    private fun findAttachedDevice(vendorId: Int, productId: Int): UsbDevice? =
+        usbManager.deviceList.values.firstOrNull { it.vendorId == vendorId && it.productId == productId }
+
+    /**
+     * Waits for a device matching [vendorId]/[productId] to (re)appear and opens
+     * it - used after a native USB-Serial-JTAG reset pulse, which makes the whole
+     * USB link re-enumerate (see [UsbSerialForAndroidTransport]'s `reopenPort`).
+     * Re-requests permission if it wasn't carried over across the re-enumeration.
+     */
+    suspend fun waitAndReopenAfterReset(vendorId: Int, productId: Int, timeoutMs: Long = 3000): UsbSerialPort {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        var device: UsbDevice?
+        do {
+            device = findAttachedDevice(vendorId, productId)
+            if (device != null) break
+            delay(100)
+        } while (System.currentTimeMillis() < deadline)
+
+        val found = device ?: throw IOException("USB device did not reappear after reset")
+        if (!hasPermission(found) && !requestPermission(found)) {
+            throw IOException("USB permission not granted after reset")
+        }
+        val driver = UsbSerialProber.getDefaultProber().probeDevice(found)
+            ?: throw IOException("No serial driver for reopened device")
+        return openPort(driver)
     }
 }

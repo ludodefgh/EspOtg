@@ -7,21 +7,41 @@ import java.io.IOException
 
 /**
  * Bridges [UsbSerialTransport] (what android_port.c calls back into via JNI) onto
- * a real, already-opened usb-serial-for-android [UsbSerialPort]. One instance per
- * flashing/monitoring session.
+ * a real usb-serial-for-android [UsbSerialPort]. One instance per flashing/
+ * monitoring session.
+ *
+ * [reopenPort], if supplied, is called after a native USB-Serial-JTAG reset
+ * pulse: that peripheral's whole USB connection re-enumerates on reset (unlike
+ * an external UART bridge, where only the target chip resets, not the USB link),
+ * so the port this transport was constructed with is dead afterward and a fresh
+ * one must be opened before the SYNC handshake can continue. Confirmed on real
+ * ESP32-S3 hardware (VID 0x303A/PID 0x1001) - see GitHub issue #4.
  */
-class UsbSerialForAndroidTransport(private val port: UsbSerialPort) : UsbSerialTransport {
+class UsbSerialForAndroidTransport(
+    initialPort: UsbSerialPort,
+    private val reopenPort: (() -> UsbSerialPort)? = null,
+) : UsbSerialTransport {
+
+    var currentPort: UsbSerialPort = initialPort
+        private set
+
+    private val isNativeUsbJtag: Boolean =
+        currentPort.device.vendorId == ESPRESSIF_USB_JTAG_VID && currentPort.device.productId == ESPRESSIF_USB_JTAG_PID
+
+    fun closeCurrentPort() {
+        runCatching { currentPort.close() }
+    }
 
     override fun read(buffer: ByteArray, size: Int, timeoutMs: Int): Int =
         try {
-            port.read(buffer, size, timeoutMs)
+            currentPort.read(buffer, size, timeoutMs)
         } catch (_: IOException) {
             -1
         }
 
     override fun write(buffer: ByteArray, size: Int, timeoutMs: Int): Int =
         try {
-            port.write(buffer, size, timeoutMs)
+            currentPort.write(buffer, size, timeoutMs)
             size
         } catch (e: SerialTimeoutException) {
             e.bytesTransferred
@@ -31,7 +51,7 @@ class UsbSerialForAndroidTransport(private val port: UsbSerialPort) : UsbSerialT
 
     override fun setBaudRate(baud: Int): Int =
         try {
-            port.setParameters(baud, UsbSerialPort.DATABITS_8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE)
+            currentPort.setParameters(baud, UsbSerialPort.DATABITS_8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE)
             0
         } catch (_: IOException) {
             -1
@@ -39,43 +59,72 @@ class UsbSerialForAndroidTransport(private val port: UsbSerialPort) : UsbSerialT
             -1
         }
 
+    override fun enterBootloader() {
+        if (isNativeUsbJtag) enterBootloaderUsbJtag() else enterBootloaderClassic()
+    }
+
     /**
      * esptool's "UnixTightReset" sequence (DTR drives BOOT, RTS drives RESET on
      * the standard CP2102/CH340/FT232 auto-reset circuit) - mirrors
      * `linux_enter_bootloader`'s LINUX_GPIO_DTR_RTS/non-USB-JTAG branch in
      * third_party/esp-serial-flasher/port/linux_port.c almost line-for-line, down
      * to the hold times (100ms/50ms) matching the library's own defaults.
-     *
-     * Native USB-Serial-JTAG boards (S2/S3/C3/C6...) use the same DTR/RTS
-     * assertions, but the chip's own USB peripheral re-enumerates after the reset
-     * pulse - Android sees a detach/reattach, which the caller (not this
-     * transport) is responsible for handling. Not yet validated on real native-USB
-     * hardware, see GitHub issue #4.
      */
-    override fun enterBootloader() {
+    private fun enterBootloaderClassic() {
         runCatching {
-            port.setDTR(false); port.setRTS(false)
-            port.setDTR(true); port.setRTS(true)
-            port.setDTR(false); port.setRTS(true)
+            currentPort.setDTR(false); currentPort.setRTS(false)
+            currentPort.setDTR(true); currentPort.setRTS(true)
+            currentPort.setDTR(false); currentPort.setRTS(true)
             Thread.sleep(RESET_HOLD_TIME_MS)
-            port.setDTR(true); port.setRTS(false)
+            currentPort.setDTR(true); currentPort.setRTS(false)
             Thread.sleep(BOOT_HOLD_TIME_MS)
-            port.setDTR(false); port.setRTS(false)
+            currentPort.setDTR(false); currentPort.setRTS(false)
         }
+    }
+
+    /**
+     * esptool's "USBJTAGSerialReset" sequence, required for ESP32-C3/S3/C6/H2/P4
+     * connected via their built-in USB-Serial-JTAG peripheral: BOOT must be
+     * asserted *before* RESET (the firmware latches BOOT at the moment RESET goes
+     * low), released through an intermediate (1,1) state to avoid a (0,0) glitch.
+     * Mirrors `linux_enter_bootloader`'s `_is_usb_jtag` branch exactly.
+     */
+    private fun enterBootloaderUsbJtag() {
+        runCatching {
+            currentPort.setDTR(false); currentPort.setRTS(false) // idle
+            Thread.sleep(RESET_HOLD_TIME_MS)
+            currentPort.setDTR(true); currentPort.setRTS(false) // assert BOOT
+            Thread.sleep(RESET_HOLD_TIME_MS)
+            currentPort.setDTR(true); currentPort.setRTS(true) // assert RESET (BOOT still asserted)
+            currentPort.setDTR(false); currentPort.setRTS(true) // release BOOT via (1,1)
+            Thread.sleep(RESET_HOLD_TIME_MS)
+            currentPort.setDTR(false); currentPort.setRTS(false) // release RESET
+        }
+
+        val reopen = reopenPort ?: return
+        closeCurrentPort()
+        currentPort = reopen()
     }
 
     /** Plain reset (RESET pulse only, BOOT left alone) - used after flashing finishes. */
     override fun resetTarget() {
         runCatching {
-            port.setDTR(false); port.setRTS(true)
+            currentPort.setDTR(false); currentPort.setRTS(true)
             Thread.sleep(RESET_HOLD_TIME_MS)
-            port.setDTR(false); port.setRTS(false)
+            currentPort.setDTR(false); currentPort.setRTS(false)
         }
+        // Native USB-Serial-JTAG re-enumerates here too, but nothing further is
+        // sent on this port afterward (the session ends right after reset), so
+        // there's nothing worth reopening for - unlike enterBootloader().
     }
 
     private companion object {
         /** Matches esp-serial-flasher's SERIAL_FLASHER_RESET_HOLD_TIME_MS/BOOT_HOLD_TIME_MS defaults. */
         const val RESET_HOLD_TIME_MS = 100L
         const val BOOT_HOLD_TIME_MS = 50L
+
+        /** Matches ESPRESSIF_USB_JTAG_VID/PID in third_party/esp-serial-flasher/port/linux_port.c. */
+        const val ESPRESSIF_USB_JTAG_VID = 0x303A
+        const val ESPRESSIF_USB_JTAG_PID = 0x1001
     }
 }
