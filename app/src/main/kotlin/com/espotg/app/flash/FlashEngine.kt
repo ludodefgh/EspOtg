@@ -216,7 +216,7 @@ class FlashEngine(private val usbRepository: UsbDeviceRepository) {
             updateEntry(entryId) { it.copy(bytesWritten = approxUncompressedWritten) }
         }
         loader.flashDeflateFinish()
-        loader.verifyMd5(offset, data.size.toLong(), md5(data))
+        loader.verifyMd5(offset, data.size.toLong(), md5Hex(data))
     }
 
     private fun deflate(data: ByteArray): ByteArray {
@@ -236,7 +236,16 @@ class FlashEngine(private val usbRepository: UsbDeviceRepository) {
         return output.toByteArray()
     }
 
-    private fun md5(data: ByteArray): ByteArray = MessageDigest.getInstance("MD5").digest(data)
+    /**
+     * MD5 as 32 lowercase-hex ASCII bytes - the format
+     * esp_loader_flash_verify_known_md5 actually memcmp's against (its own
+     * in-library caller hexifies before passing; raw 16-byte digests compare
+     * garbage and read past the buffer - the INVALID_MD5-on-every-flash bug).
+     */
+    private fun md5Hex(data: ByteArray): ByteArray =
+        MessageDigest.getInstance("MD5").digest(data)
+            .joinToString("") { "%02x".format(it) }
+            .toByteArray(Charsets.US_ASCII)
 
     private fun ByteArray.toMacString(): String = joinToString(":") { "%02X".format(it) }
 

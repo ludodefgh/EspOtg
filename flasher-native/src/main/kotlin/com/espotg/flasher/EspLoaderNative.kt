@@ -67,9 +67,16 @@ class EspLoaderNative(
 
     fun flashDeflateFinish() = checked(nativeFlashDeflateFinish(handle))
 
-    /** Verifies flash content against a known MD5 - needed after a deflate flash, which skips the usual inline MD5 check. */
-    fun verifyMd5(address: Long, size: Long, expectedMd5: ByteArray) =
+    /**
+     * Verifies flash content against a known MD5 - needed after a deflate flash,
+     * which skips the usual inline MD5 check. [expectedMd5] must be the digest as
+     * **32 lowercase-hex ASCII bytes**, not the raw 16-byte digest - that's what
+     * esp_loader_flash_verify_known_md5 memcmp's against.
+     */
+    fun verifyMd5(address: Long, size: Long, expectedMd5: ByteArray) {
+        require(expectedMd5.size == 32) { "expectedMd5 must be 32 hex-ASCII bytes, got ${expectedMd5.size}" }
         checked(nativeVerifyMd5(handle, address, size, expectedMd5))
+    }
 
     fun resetTarget() = nativeResetTarget(handle)
 
