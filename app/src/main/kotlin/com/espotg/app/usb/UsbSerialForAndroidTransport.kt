@@ -39,16 +39,47 @@ class UsbSerialForAndroidTransport(
     private val isNativeUsbJtag: Boolean =
         currentPort.device.vendorId == ESPRESSIF_USB_JTAG_VID && currentPort.device.productId == ESPRESSIF_USB_JTAG_PID
 
+    // Intermediate RX buffer: the SLIP decoder asks for 1 byte at a time, but
+    // usb-serial-for-android's read(dest, length, timeout) silently DISCARDS a
+    // whole incoming USB packet when `length` is smaller than the packet that
+    // arrived (kernel EOVERFLOW -> library returns 0, looking exactly like a
+    // timeout). The device answers SYNC with multi-byte packets, so every
+    // 1-byte read was throwing the response away - the root cause of the
+    // "TIMEOUT with perfect TX and zero RX" symptom on real hardware. Always
+    // read from the port with a full-size buffer and serve small requests from
+    // the cache instead.
+    private val rxBuffer = ByteArray(RX_BUFFER_SIZE)
+    private var rxStart = 0
+    private var rxEnd = 0
+
+    private fun invalidateRxCache() {
+        rxStart = 0
+        rxEnd = 0
+    }
+
     fun closeCurrentPort() {
+        invalidateRxCache()
         runCatching { currentPort.close() }
     }
 
-    override fun read(buffer: ByteArray, size: Int, timeoutMs: Int): Int =
-        try {
-            currentPort.read(buffer, size, timeoutMs)
-        } catch (_: IOException) {
-            -1
+    override fun read(buffer: ByteArray, size: Int, timeoutMs: Int): Int {
+        if (rxStart >= rxEnd) {
+            val n = try {
+                currentPort.read(rxBuffer, rxBuffer.size, timeoutMs)
+            } catch (_: IOException) {
+                return -1
+            }
+            if (n <= 0) {
+                return n
+            }
+            rxStart = 0
+            rxEnd = n
         }
+        val toCopy = minOf(size, rxEnd - rxStart)
+        System.arraycopy(rxBuffer, rxStart, buffer, 0, toCopy)
+        rxStart += toCopy
+        return toCopy
+    }
 
     override fun write(buffer: ByteArray, size: Int, timeoutMs: Int): Int =
         try {
@@ -125,6 +156,7 @@ class UsbSerialForAndroidTransport(
         runCatching { reopen() }
             .onSuccess { newPort ->
                 currentPort = newPort
+                invalidateRxCache()
                 logger?.invoke("USB device reopened after reset")
                 lastBaudRate?.let { setBaudRate(it) }
                 // The endpoints on a just-opened CDC-ACM connection aren't
@@ -155,6 +187,7 @@ class UsbSerialForAndroidTransport(
         const val RESET_HOLD_TIME_MS = 100L
         const val BOOT_HOLD_TIME_MS = 50L
         const val PORT_SETTLE_TIME_MS = 300L
+        const val RX_BUFFER_SIZE = 4096
 
         /** Matches ESPRESSIF_USB_JTAG_VID/PID in third_party/esp-serial-flasher/port/linux_port.c. */
         const val ESPRESSIF_USB_JTAG_VID = 0x303A

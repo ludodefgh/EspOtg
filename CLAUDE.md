@@ -181,6 +181,40 @@ without a reason; it would silently make the build require network access.
   (`mipmap-anydpi/`) breaks AAPT2 resource resolution (`resource mipmap/ic_launcher
   not found`). Left the lint warning in place rather than "fixing" it.
 
+## Real-hardware debugging lessons (ESP32-C3 Super Mini, native USB-Serial-JTAG)
+
+Chronology of the first real-device bring-up (v0.1.1..v0.1.8), kept here because
+each step eliminated a plausible-but-wrong hypothesis:
+
+- **usb-serial-for-android `read(dest, length, timeout)` silently discards whole
+  USB packets when `length` is smaller than the arriving packet** (kernel
+  EOVERFLOW → the library maps it to 0, indistinguishable from a timeout). The
+  SLIP decoder reads 1 byte at a time; the ROM bootloader answers SYNC with
+  multi-byte packets → every response was thrown away while every TX succeeded.
+  THE root cause of days of "TIMEOUT with perfect TX and zero RX" on real
+  hardware, fixed with an intermediate 4KB RX cache in
+  `UsbSerialForAndroidTransport.read()` (always read full-buffer from the port,
+  serve small requests from the cache). The serial monitor never hit this
+  because it always read with a 4096-byte buffer. If RX ever "times out" again
+  while TX flows, check buffer sizing *first*, not reset sequences.
+- The chip (VID 0x303A/PID 0x1001) may not respond to DTR/RTS auto-reset at all
+  if its *current firmware* doesn't implement USB-Serial-JTAG reset handling -
+  auto-reset over native USB is a firmware feature, not a hardware guarantee
+  (external UART-bridge boards hardwire it instead). Manual entry (hold BOOT,
+  tap RESET / replug while holding BOOT) is the fallback; the app has an "Auto
+  bootloader reset" toggle for exactly this.
+- The ROM banner (`rst:0x15 (USB_UART_CHIP_RESET), boot:0x5 (DOWNLOAD(USB/...)),
+  waiting for download`) visible through the app's own serial monitor was the
+  definitive proof the chip *was* in download mode while SYNC kept "timing out" -
+  which is what finally narrowed the bug down to the RX path rather than reset
+  sequencing. The monitor is the best cross-check tool when flashing misbehaves:
+  same port, same transport, different read pattern.
+- `enter_bootloader` in esp_loader_port_ops_t returns void - exceptions/failures
+  in the Kotlin callbacks behind it are invisible to the C library and surface
+  later as a generic SYNC timeout. Anything that can fail inside those callbacks
+  must log through its own side channel (the `logger` param on
+  UsbSerialForAndroidTransport); never assume a silent enter_bootloader worked.
+
 ## Release signing
 
 A release keystore exists locally on the dev machine, kept **outside this repo**
