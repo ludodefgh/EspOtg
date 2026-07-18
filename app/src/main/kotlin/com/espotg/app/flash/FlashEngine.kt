@@ -162,7 +162,12 @@ class FlashEngine(private val usbRepository: UsbDeviceRepository) {
         options: FlashOptions,
     ) {
         updateEntry(entryId) { it.copy(state = FlashStepState.WRITING) }
-        log(LogLevel.INFO, "Flashing ${uri.substringAfterLast('/')} @ 0x%X".format(offset))
+        // No String.format here: content URIs are percent-encoded ("%3a" etc.),
+        // and running .format() over a string with the filename interpolated in
+        // treats those escapes as format specifiers ("%3a" = width-3 hex-float
+        // conversion -> IllegalFormatConversionException: a != java.lang.Long,
+        // the failure that masqueraded as an R8 bug on the first real flash).
+        log(LogLevel.INFO, "Flashing ${uri.substringAfterLast('/')} @ 0x${offset.toString(16).uppercase()}")
 
         val rawData = context.contentResolver.openInputStream(uri.toUri())?.use { it.readBytes() }
             ?: throw IOException("Cannot open $uri")

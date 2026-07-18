@@ -214,17 +214,25 @@ each step eliminated a plausible-but-wrong hypothesis:
   later as a generic SYNC timeout. Anything that can fail inside those callbacks
   must log through its own side channel (the `logger` param on
   UsbSerialForAndroidTransport); never assume a silent enter_bootloader worked.
-- **Avoid `@JvmInline value class` in the release-build flash path.** The first
-  flash attempt that got past SYNC/stub/baud-change on real hardware died with
-  `ClassCastException: a != java.lang.Long` (minified name) the moment
-  `HexOffset.value` was read - R8's optimization of inline-class boxing was the
-  prime suspect (only Long-wrapping value class on that path; debug builds
-  unaffected). HexOffset is now a plain data class; don't reintroduce value
-  classes into serialized/JNI-adjacent model types without testing the *minified
-  release* build on-device, not just debug. Related hygiene added at the same
-  time: `-keepattributes SourceFile,LineNumberTable` in app/proguard-rules.pro +
-  FlashEngine logging `stackTraceToString()` on failure, so future release-only
-  crashes are locatable from a user's log paste instead of an opaque one-liner.
+- **Never call `.format()` on a string with untrusted text interpolated into
+  it.** The first flash to get past SYNC/stub/baud-change died with
+  `a != java.lang.Long`, initially misread as an R8/value-class
+  ClassCastException (HexOffset got converted from a value class to a data class
+  on that wrong theory - harmless, kept). The stack trace (once
+  LineNumberTable + stackTraceToString logging were added) showed the truth:
+  `IllegalFormatConversionException` from `String.format` - the log line
+  `"Flashing ${uriSegment} @ 0x%X".format(offset)` interpolated a
+  percent-encoded content-URI filename, whose `%3a`-style escapes get parsed as
+  format specifiers (`%3a` = width-3 hex-float conversion, incompatible with
+  Long → message "a != java.lang.Long", where 'a' is the conversion char, not a
+  class). Format strings must be literals; interpolate values with Kotlin
+  templates or pass them as format *arguments*, never into the format string
+  itself. The two remaining `.format()` calls (toMacString, toHexString) use
+  literal format strings and are fine.
+- Release-only crash hygiene (added during the above): `-keepattributes
+  SourceFile,LineNumberTable` in app/proguard-rules.pro + FlashEngine logging
+  `stackTraceToString()` on failure - keep both; the r8-map-id frames in a
+  user's log paste were exactly what cracked the misdiagnosis.
 
 ## Release signing
 
