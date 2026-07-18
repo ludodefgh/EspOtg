@@ -193,6 +193,28 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private val _monitorSelectError = MutableStateFlow<String?>(null)
+    val monitorSelectError: StateFlow<String?> = _monitorSelectError
+
+    /**
+     * Lets MonitorScreen pick a device on its own, independent of the Connect
+     * screen's identify flow - Monitor doesn't need a bootloader handshake, just
+     * USB permission on a port. Without this, Monitor was only reachable after a
+     * successful (or at least attempted) connect on the Connect screen, since
+     * that's the only other place [_selectedDriver] got set.
+     */
+    fun selectDriverForMonitor(driver: UsbSerialDriver) {
+        viewModelScope.launch {
+            _monitorSelectError.value = null
+            val granted = usbRepository.requestPermission(driver.device)
+            if (!granted) {
+                _monitorSelectError.value = "USB permission denied"
+                return@launch
+            }
+            _selectedDriver.value = driver
+        }
+    }
+
     fun startMonitor(baudRate: Int) {
         val driver = _selectedDriver.value ?: return
         if (!UsbPortCoordinator.tryAcquire(PortOccupant.MONITOR)) return
