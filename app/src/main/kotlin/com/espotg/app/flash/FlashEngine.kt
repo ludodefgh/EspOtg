@@ -60,9 +60,14 @@ class FlashEngine(private val usbRepository: UsbDeviceRepository) {
             initialPort = port,
             reopenPort = {
                 runBlocking {
-                    usbRepository.waitAndReopenAfterReset(driver.device.vendorId, driver.device.productId)
+                    usbRepository.waitAndReopenAfterReset(
+                        driver.device.vendorId,
+                        driver.device.productId,
+                        onProgress = { log(LogLevel.DEBUG, it) },
+                    )
                 }
             },
+            logger = { log(LogLevel.DEBUG, it) },
         )
     }
 

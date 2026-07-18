@@ -109,22 +109,44 @@ class UsbDeviceRepository(private val context: Context) {
      * it - used after a native USB-Serial-JTAG reset pulse, which makes the whole
      * USB link re-enumerate (see [UsbSerialForAndroidTransport]'s `reopenPort`).
      * Re-requests permission if it wasn't carried over across the re-enumeration.
+     * [onProgress], if supplied, receives step-by-step diagnostics - the only
+     * place these are visible, since the caller is a JNI callback with no error
+     * return path (see [UsbSerialForAndroidTransport]'s class doc).
      */
-    suspend fun waitAndReopenAfterReset(vendorId: Int, productId: Int, timeoutMs: Long = 3000): UsbSerialPort {
+    suspend fun waitAndReopenAfterReset(
+        vendorId: Int,
+        productId: Int,
+        timeoutMs: Long = 5000,
+        onProgress: ((String) -> Unit)? = null,
+    ): UsbSerialPort {
         val deadline = System.currentTimeMillis() + timeoutMs
         var device: UsbDevice?
+        var pollCount = 0
         do {
             device = findAttachedDevice(vendorId, productId)
             if (device != null) break
+            pollCount++
             delay(100)
         } while (System.currentTimeMillis() < deadline)
 
-        val found = device ?: throw IOException("USB device did not reappear after reset")
-        if (!hasPermission(found) && !requestPermission(found)) {
-            throw IOException("USB permission not granted after reset")
+        val found = device ?: run {
+            onProgress?.invoke("Device did not reappear after ${timeoutMs}ms ($pollCount polls)")
+            throw IOException("USB device did not reappear after reset")
+        }
+        onProgress?.invoke("Device reappeared after ${pollCount * 100}ms, hasPermission=${hasPermission(found)}")
+
+        if (!hasPermission(found)) {
+            onProgress?.invoke("Re-requesting USB permission on reopened device...")
+            if (!requestPermission(found)) {
+                onProgress?.invoke("Permission request denied/failed on reopened device")
+                throw IOException("USB permission not granted after reset")
+            }
         }
         val driver = UsbSerialProber.getDefaultProber().probeDevice(found)
-            ?: throw IOException("No serial driver for reopened device")
+            ?: run {
+                onProgress?.invoke("No usb-serial-for-android driver matched the reopened device")
+                throw IOException("No serial driver for reopened device")
+            }
         return openPort(driver)
     }
 }

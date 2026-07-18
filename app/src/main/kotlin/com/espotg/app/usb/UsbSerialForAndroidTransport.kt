@@ -15,15 +15,25 @@ import java.io.IOException
  * an external UART bridge, where only the target chip resets, not the USB link),
  * so the port this transport was constructed with is dead afterward and a fresh
  * one must be opened before the SYNC handshake can continue. Confirmed on real
- * ESP32-S3 hardware (VID 0x303A/PID 0x1001) - see GitHub issue #4.
+ * ESP32 hardware (VID 0x303A/PID 0x1001) - see GitHub issue #4.
+ *
+ * [logger], if supplied, receives diagnostic messages about the reset/reopen
+ * sequence specifically. Failures here get silently absorbed at the JNI boundary
+ * (`enter_bootloader` in esp_loader_port_ops_t returns void - there's no way to
+ * propagate a real error back through esp_loader_connect(), it just eventually
+ * surfaces as a generic ESP_LOADER_ERROR_TIMEOUT on the SYNC step that follows),
+ * so this is the only place the *actual* reason ever becomes visible.
  */
 class UsbSerialForAndroidTransport(
     initialPort: UsbSerialPort,
     private val reopenPort: (() -> UsbSerialPort)? = null,
+    private val logger: ((String) -> Unit)? = null,
 ) : UsbSerialTransport {
 
     var currentPort: UsbSerialPort = initialPort
         private set
+
+    private var lastBaudRate: Int? = null
 
     private val isNativeUsbJtag: Boolean =
         currentPort.device.vendorId == ESPRESSIF_USB_JTAG_VID && currentPort.device.productId == ESPRESSIF_USB_JTAG_PID
@@ -52,6 +62,7 @@ class UsbSerialForAndroidTransport(
     override fun setBaudRate(baud: Int): Int =
         try {
             currentPort.setParameters(baud, UsbSerialPort.DATABITS_8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE)
+            lastBaudRate = baud
             0
         } catch (_: IOException) {
             -1
@@ -79,7 +90,7 @@ class UsbSerialForAndroidTransport(
             currentPort.setDTR(true); currentPort.setRTS(false)
             Thread.sleep(BOOT_HOLD_TIME_MS)
             currentPort.setDTR(false); currentPort.setRTS(false)
-        }
+        }.onFailure { logger?.invoke("Classic reset sequence failed: ${it.message}") }
     }
 
     /**
@@ -90,7 +101,8 @@ class UsbSerialForAndroidTransport(
      * Mirrors `linux_enter_bootloader`'s `_is_usb_jtag` branch exactly.
      */
     private fun enterBootloaderUsbJtag() {
-        runCatching {
+        logger?.invoke("Native USB-Serial-JTAG device detected, using USBJTAGSerialReset sequence")
+        val pulseResult = runCatching {
             currentPort.setDTR(false); currentPort.setRTS(false) // idle
             Thread.sleep(RESET_HOLD_TIME_MS)
             currentPort.setDTR(true); currentPort.setRTS(false) // assert BOOT
@@ -100,10 +112,20 @@ class UsbSerialForAndroidTransport(
             Thread.sleep(RESET_HOLD_TIME_MS)
             currentPort.setDTR(false); currentPort.setRTS(false) // release RESET
         }
+        pulseResult.onFailure { logger?.invoke("USB-JTAG reset pulse failed: ${it.message}") }
 
         val reopen = reopenPort ?: return
+        logger?.invoke("Reset pulse sent, waiting for USB device to re-enumerate...")
         closeCurrentPort()
-        currentPort = reopen()
+        runCatching { reopen() }
+            .onSuccess { newPort ->
+                currentPort = newPort
+                logger?.invoke("USB device reopened after reset")
+                lastBaudRate?.let { setBaudRate(it) }
+            }
+            .onFailure { e ->
+                logger?.invoke("Failed to reopen USB device after reset: ${e.message} - subsequent SYNC will time out")
+            }
     }
 
     /** Plain reset (RESET pulse only, BOOT left alone) - used after flashing finishes. */
