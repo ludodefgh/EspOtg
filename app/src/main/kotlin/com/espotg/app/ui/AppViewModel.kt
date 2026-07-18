@@ -69,7 +69,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     init {
         viewModelScope.launch {
             flashEngine.logs.collect { line ->
-                _sessionLogs.update { it + line }
+                // Bounded: drop oldest past the cap so a busy flash session can't
+                // grow the buffer (and recomposition cost) without limit.
+                _sessionLogs.update { logs ->
+                    if (logs.size >= MAX_SESSION_LOG_LINES) {
+                        logs.drop(logs.size - MAX_SESSION_LOG_LINES + 1) + line
+                    } else {
+                        logs + line
+                    }
+                }
             }
         }
     }
@@ -314,5 +322,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             dtr?.let { port.setDTR(it) }
             rts?.let { port.setRTS(it) }
         }
+    }
+
+    private companion object {
+        const val MAX_SESSION_LOG_LINES = 3000
     }
 }

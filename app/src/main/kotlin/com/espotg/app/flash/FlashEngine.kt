@@ -204,9 +204,7 @@ class FlashEngine(private val usbRepository: UsbDeviceRepository) {
     private fun flashCompressed(loader: EspLoaderNative, entryId: String, offset: Long, data: ByteArray) {
         // esp-serial-flasher's deflate path doesn't accumulate MD5 itself (see
         // esp_loader_flash_deflate_start docs) - verified explicitly below via
-        // esp_loader_flash_verify_known_md5. Compatibility of the raw-deflate
-        // stream produced here with what the stub expects is not yet validated
-        // on real hardware, see GitHub issue #3.
+        // esp_loader_flash_verify_known_md5.
         val compressed = deflate(data)
         loader.flashDeflateStart(offset, data.size.toLong(), compressed.size.toLong(), BLOCK_SIZE)
         var written = 0
@@ -222,7 +220,11 @@ class FlashEngine(private val usbRepository: UsbDeviceRepository) {
     }
 
     private fun deflate(data: ByteArray): ByteArray {
-        val deflater = Deflater(Deflater.DEFAULT_COMPRESSION, /* nowrap = */ true)
+        // nowrap=false: esptool sends a ZLIB-WRAPPED stream (zlib.compress, i.e.
+        // 0x78 header + adler32 trailer), and the flasher stub inflates expecting
+        // that wrapper - the initial nowrap=true (raw deflate) guess produced
+        // mid-flash errors on real hardware, see GitHub issue #3.
+        val deflater = Deflater(Deflater.BEST_COMPRESSION, /* nowrap = */ false)
         deflater.setInput(data)
         deflater.finish()
         val output = ByteArrayOutputStream(data.size)

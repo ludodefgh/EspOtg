@@ -96,12 +96,15 @@ static esp_loader_error_t android_write(esp_loader_port_t *base, const uint8_t *
 
         jint n = (*env)->CallIntMethod(env, p->callback_obj, p->m_write, buf, chunk_size, (jint) remaining);
         (*env)->DeleteLocalRef(env, buf);
-        android_log_transport(p, "write(req=%d, timeout=%dms) -> %d", (int) chunk_size, (int) remaining, (int) n);
 
         if (check_and_clear_exception(env, "onNativeWrite")) {
             return ESP_LOADER_ERROR_FAIL;
         }
         if (n <= 0) {
+            /* Only failures are logged - per-call success logging flooded the
+             * session log during flash writes (thousands of lines, enough to
+             * break clipboard export) once the link was actually working. */
+            android_log_transport(p, "write(req=%d, timeout=%dms) -> %d", (int) chunk_size, (int) remaining, (int) n);
             return ESP_LOADER_ERROR_TIMEOUT;
         }
 
@@ -126,13 +129,14 @@ static esp_loader_error_t android_read(esp_loader_port_t *base, uint8_t *data, u
         jbyteArray buf = (*env)->NewByteArray(env, chunk_size);
 
         jint n = (*env)->CallIntMethod(env, p->callback_obj, p->m_read, buf, chunk_size, (jint) remaining);
-        android_log_transport(p, "read(req=%d, timeout=%dms) -> %d", (int) chunk_size, (int) remaining, (int) n);
 
         if (check_and_clear_exception(env, "onNativeRead")) {
             (*env)->DeleteLocalRef(env, buf);
             return ESP_LOADER_ERROR_FAIL;
         }
         if (n <= 0) {
+            /* Failure-only logging - see the matching note in android_write(). */
+            android_log_transport(p, "read(req=%d, timeout=%dms) -> %d", (int) chunk_size, (int) remaining, (int) n);
             (*env)->DeleteLocalRef(env, buf);
             return ESP_LOADER_ERROR_TIMEOUT;
         }

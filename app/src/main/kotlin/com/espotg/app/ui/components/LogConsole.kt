@@ -51,8 +51,18 @@ fun LogConsole(lines: List<LogLine>, modifier: Modifier = Modifier) {
                 indication = null,
                 onClick = {},
                 onLongClick = {
-                    clipboard.setText(AnnotatedString(lines.joinToString("\n") { it.message }))
-                    Toast.makeText(context, "Log copied to clipboard", Toast.LENGTH_SHORT).show()
+                    // Android's clipboard rides a Binder transaction with a hard
+                    // ~1MB limit - exceeding it kills the app with
+                    // TransactionTooLargeException (this crashed the app when
+                    // copying a busy flash session's log). Cap the payload to the
+                    // most recent content and guard the call anyway.
+                    var text = lines.joinToString("\n") { it.message }
+                    if (text.length > MAX_CLIPBOARD_CHARS) {
+                        text = "[... truncated, showing most recent ...]\n" + text.takeLast(MAX_CLIPBOARD_CHARS)
+                    }
+                    runCatching { clipboard.setText(AnnotatedString(text)) }
+                        .onSuccess { Toast.makeText(context, "Log copied to clipboard", Toast.LENGTH_SHORT).show() }
+                        .onFailure { Toast.makeText(context, "Copy failed: log too large", Toast.LENGTH_SHORT).show() }
                 },
             ),
     ) {
@@ -67,6 +77,8 @@ fun LogConsole(lines: List<LogLine>, modifier: Modifier = Modifier) {
         }
     }
 }
+
+private const val MAX_CLIPBOARD_CHARS = 400_000
 
 private fun colorFor(level: LogLevel): Color = when (level) {
     LogLevel.ERROR -> Color(0xFFFF6B6B)
