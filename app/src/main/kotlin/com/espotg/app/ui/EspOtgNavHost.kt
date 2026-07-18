@@ -25,6 +25,7 @@ fun EspOtgNavHost(appViewModel: AppViewModel, navController: NavHostController =
                 appViewModel = appViewModel,
                 onConnected = { navController.navigate(Routes.FLASH) },
                 onOpenProfiles = { navController.navigate(Routes.PROFILES) },
+                onOpenMonitor = { navController.navigate(Routes.MONITOR) },
             )
         }
         composable(Routes.FLASH) {

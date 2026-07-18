@@ -44,6 +44,7 @@ fun ConnectScreen(
     appViewModel: AppViewModel,
     onConnected: () -> Unit,
     onOpenProfiles: () -> Unit,
+    onOpenMonitor: () -> Unit,
 ) {
     val drivers by appViewModel.usbRepository.availableDrivers.collectAsStateWithLifecycle()
     val status by appViewModel.connectionStatus.collectAsStateWithLifecycle()
@@ -72,7 +73,10 @@ fun ConnectScreen(
                         )
                     }
                 },
-                actions = { TextButton(onClick = onOpenProfiles) { Text("Profiles") } },
+                actions = {
+                    TextButton(onClick = onOpenMonitor) { Text("Monitor") }
+                    TextButton(onClick = onOpenProfiles) { Text("Profiles") }
+                },
             )
         },
     ) { padding ->
@@ -128,8 +132,14 @@ fun ConnectScreen(
 
             if (logs.isNotEmpty()) {
                 Spacer(Modifier.height(16.dp))
-                Text("Connection log", style = MaterialTheme.typography.titleSmall)
-                Spacer(Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("Connection log", style = MaterialTheme.typography.titleSmall)
+                    TextButton(onClick = { logs.clear() }) { Text("Clear") }
+                }
                 LogConsole(lines = logs, modifier = Modifier.weight(1f).fillMaxWidth())
             }
         }

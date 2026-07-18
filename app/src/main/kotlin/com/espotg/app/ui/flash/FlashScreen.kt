@@ -2,6 +2,7 @@ package com.espotg.app.ui.flash
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -119,6 +120,16 @@ fun FlashScreen(appViewModel: AppViewModel, onOpenMonitor: () -> Unit) {
                 Spacer(Modifier.height(8.dp))
             }
 
+            if (logs.isNotEmpty()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("Flash log", style = MaterialTheme.typography.titleSmall)
+                    TextButton(onClick = { logs.clear() }) { Text("Clear") }
+                }
+            }
             LogConsole(lines = logs, modifier = Modifier.weight(1f).fillMaxWidth())
         }
     }

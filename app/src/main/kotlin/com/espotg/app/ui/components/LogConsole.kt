@@ -1,6 +1,10 @@
 package com.espotg.app.ui.components
 
+import android.widget.Toast
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -8,18 +12,31 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.espotg.core.LogLevel
 import com.espotg.core.LogLine
 
-/** Monospace, auto-scrolling console for live flash/monitor logs, color-coded by level. */
+/**
+ * Monospace, auto-scrolling console for live flash/monitor logs, color-coded by
+ * level. Long-press anywhere in the console to copy every visible line to the
+ * clipboard - handy for pasting the whole log elsewhere rather than screenshotting.
+ */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun LogConsole(lines: List<LogLine>, modifier: Modifier = Modifier) {
     val listState = rememberLazyListState()
+    val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
+    val interactionSource = remember { MutableInteractionSource() }
+
     LaunchedEffect(lines.size) {
         if (lines.isNotEmpty()) {
             listState.animateScrollToItem(lines.size - 1)
@@ -27,7 +44,17 @@ fun LogConsole(lines: List<LogLine>, modifier: Modifier = Modifier) {
     }
     LazyColumn(
         state = listState,
-        modifier = modifier.background(Color(0xFF0D1117)),
+        modifier = modifier
+            .background(Color(0xFF0D1117))
+            .combinedClickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = {},
+                onLongClick = {
+                    clipboard.setText(AnnotatedString(lines.joinToString("\n") { it.message }))
+                    Toast.makeText(context, "Log copied to clipboard", Toast.LENGTH_SHORT).show()
+                },
+            ),
     ) {
         items(lines) { line ->
             Text(
