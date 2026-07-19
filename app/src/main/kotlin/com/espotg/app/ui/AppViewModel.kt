@@ -14,6 +14,7 @@ import com.espotg.app.usb.PortOccupant
 import com.espotg.app.usb.UsbDeviceRepository
 import com.espotg.app.usb.UsbPortCoordinator
 import com.espotg.core.ChipIdentity
+import com.espotg.core.DeviceFirmwareInfo
 import com.espotg.core.EspBinaryInfo
 import com.espotg.core.FlashEntry
 import com.espotg.core.FlashOptions
@@ -99,6 +100,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             // force re-selection so a fresh driver (with fresh permission) is used.
             stopMonitor()
             _selectedDriver.value = null
+            _deviceInfo.value = null
             if (_connectionStatus.value is ConnectionStatus.Identified) {
                 _connectionStatus.value = ConnectionStatus.Idle
             }
@@ -130,6 +132,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val _flashRunning = MutableStateFlow(false)
     val flashRunning: StateFlow<Boolean> = _flashRunning
 
+    private val _deviceInfo = MutableStateFlow<DeviceFirmwareInfo?>(null)
+    val deviceInfo: StateFlow<DeviceFirmwareInfo?> = _deviceInfo
+    private val _deviceInfoLoading = MutableStateFlow(false)
+    val deviceInfoLoading: StateFlow<Boolean> = _deviceInfoLoading
+
     private val _monitorLines = MutableStateFlow<List<String>>(emptyList())
     val monitorLines: StateFlow<List<String>> = _monitorLines
     private val _monitorRunning = MutableStateFlow(false)
@@ -154,6 +161,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun connectAndIdentify(driver: UsbSerialDriver) {
         if (_selectedDriver.value?.device?.deviceId != driver.device.deviceId) {
             clearSessionLogs()
+            _deviceInfo.value = null
         }
         _selectedDriver.value = driver
         _connectionStatus.value = ConnectionStatus.RequestingPermission
@@ -239,6 +247,29 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun deleteProfile(profile: DeviceProfile) {
         viewModelScope.launch { profileRepository.delete(profile) }
+    }
+
+    /** Reads back the firmware metadata currently installed on the connected chip. */
+    fun readDeviceInfo() {
+        val driver = _selectedDriver.value ?: run {
+            logToSession("Cannot read device info: no USB device selected")
+            return
+        }
+        if (!UsbPortCoordinator.tryAcquire(PortOccupant.FLASHER)) {
+            logToSession("Cannot read device info: serial port is busy")
+            return
+        }
+        _deviceInfoLoading.value = true
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                _deviceInfo.value = flashEngine.readDeviceInfo(driver, autoReset = _autoBootloaderReset.value)
+            } catch (_: Exception) {
+                // Already surfaced via flashEngine.logs.
+            } finally {
+                _deviceInfoLoading.value = false
+                UsbPortCoordinator.release(PortOccupant.FLASHER)
+            }
+        }
     }
 
     fun startFlash() {

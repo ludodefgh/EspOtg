@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -20,6 +21,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.HorizontalDivider
@@ -27,6 +30,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -46,6 +50,7 @@ import com.espotg.app.ui.AppViewModel
 import com.espotg.app.ui.components.FlashOptionsPanel
 import com.espotg.app.ui.components.HexOffsetField
 import com.espotg.app.ui.components.LogConsole
+import com.espotg.core.DeviceFirmwareInfo
 import com.espotg.core.EspBinaryInfo
 import com.espotg.core.EspImageType
 import com.espotg.core.FlashEntry
@@ -61,6 +66,8 @@ fun FlashScreen(appViewModel: AppViewModel, onOpenMonitor: () -> Unit) {
     val progress by appViewModel.flashEngine.progress.collectAsStateWithLifecycle()
     var showOptions by remember { mutableStateOf(false) }
     val logs by appViewModel.sessionLogs.collectAsStateWithLifecycle()
+    val deviceInfo by appViewModel.deviceInfo.collectAsStateWithLifecycle()
+    val deviceInfoLoading by appViewModel.deviceInfoLoading.collectAsStateWithLifecycle()
 
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         uris.forEach { appViewModel.addBinary(it) }
@@ -83,6 +90,20 @@ fun FlashScreen(appViewModel: AppViewModel, onOpenMonitor: () -> Unit) {
     ) { padding ->
         Column(modifier = Modifier.padding(padding).fillMaxSize().padding(16.dp)) {
             Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedButton(onClick = { appViewModel.readDeviceInfo() }, enabled = !deviceInfoLoading && !flashRunning) {
+                        Text("Read installed firmware")
+                    }
+                    if (deviceInfoLoading) {
+                        Spacer(Modifier.width(8.dp))
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp))
+                    }
+                }
+                deviceInfo?.let { DeviceInfoCard(it) }
+                Spacer(Modifier.height(8.dp))
+                HorizontalDivider()
+                Spacer(Modifier.height(8.dp))
+
                 if (plan.entries.isEmpty()) {
                     Text("No binaries added yet. Tap \"Add binary\" to pick one or more .bin files.")
                 } else {
@@ -197,5 +218,39 @@ private fun InfoBadge(label: String, containerColor: Color) {
             style = MaterialTheme.typography.labelSmall,
             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
         )
+    }
+}
+
+@Composable
+private fun DeviceInfoCard(info: DeviceFirmwareInfo) {
+    Card(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text("Installed firmware", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(4.dp))
+            val flash = info.flashSizeBytes?.let { "${it / (1024 * 1024)}MB flash" } ?: "flash size unknown"
+            Text("${info.chip} · $flash", style = MaterialTheme.typography.bodyMedium)
+            Text("MAC ${info.macAddress}", style = MaterialTheme.typography.bodySmall)
+
+            info.bootloader?.let { bl ->
+                Spacer(Modifier.height(8.dp))
+                Text("Bootloader", style = MaterialTheme.typography.labelMedium)
+                BinaryInfoBadges(bl)
+            }
+
+            if (info.appPartitions.isEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Text("No app partitions found.", style = MaterialTheme.typography.bodySmall)
+            } else {
+                info.appPartitions.forEach { part ->
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "${part.label} (${part.subtypeName}) @ 0x${part.offset.toString(16).uppercase()}",
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                    part.info?.let { BinaryInfoBadges(it) }
+                        ?: Text("empty / not an app image", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
     }
 }

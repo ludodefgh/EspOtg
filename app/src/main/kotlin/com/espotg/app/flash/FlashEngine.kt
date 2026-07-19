@@ -4,8 +4,13 @@ import android.content.Context
 import androidx.core.net.toUri
 import com.espotg.app.usb.UsbDeviceRepository
 import com.espotg.app.usb.UsbSerialForAndroidTransport
+import com.espotg.core.AppPartitionInfo
 import com.espotg.core.ChipIdentity
+import com.espotg.core.DeviceFirmwareInfo
+import com.espotg.core.EspBinaryInfo
 import com.espotg.core.EspImageHeader
+import com.espotg.core.EspPartition
+import com.espotg.core.EspPartitionTable
 import com.espotg.core.FlashEntryProgress
 import com.espotg.core.FlashOptions
 import com.espotg.core.FlashPlan
@@ -106,6 +111,72 @@ class FlashEngine(private val usbRepository: UsbDeviceRepository) {
             loader.close()
             transport.closeCurrentPort()
         }
+    }
+
+    /**
+     * Reads back what's currently installed on the chip: connects (with the RAM
+     * stub, for fast flash reads), then reads the bootloader header, the partition
+     * table, and each app partition's esp_app_desc_t straight from flash. Same
+     * [autoReset] semantics as [identify].
+     */
+    suspend fun readDeviceInfo(driver: UsbSerialDriver, syncBaudRate: Int = 115_200, autoReset: Boolean = true): DeviceFirmwareInfo {
+        val transport = openTransport(driver, autoReset)
+        transport.setBaudRate(syncBaudRate)
+        val loader = EspLoaderNative(transport) { level, message -> log(level, message) }
+        try {
+            log(LogLevel.INFO, "Connecting to read device info...")
+            loader.connect(syncTimeoutMs = 100, trials = 10, useStub = true)
+            val chip = loader.getTargetChip()
+            val mac = loader.readMac().toMacString()
+            val flashSize = runCatching { loader.detectFlashSize() }.getOrNull()
+            log(LogLevel.INFO, "Connected - $chip, MAC $mac, flash ${flashSize?.let { it / (1024 * 1024) }?.let { "${it}MB" } ?: "?"}")
+
+            val bootloader = runCatching {
+                EspBinaryInfo.parse(loader.flashRead(EspPartitionTable.bootloaderOffset(chip), 0x60))
+            }.getOrNull()
+
+            // The partition table isn't necessarily at the 0x8000 default
+            // (CONFIG_PARTITION_TABLE_OFFSET is configurable and there's no fixed
+            // runtime pointer to it), so probe the common offsets and use the
+            // first that actually parses as a partition table.
+            val partitions = findPartitionTable(loader)
+
+            val appPartitions = partitions.filter { it.isApp }.map { p ->
+                val info = runCatching { EspBinaryInfo.parse(loader.flashRead(p.offset, 0xB0)) }.getOrNull()
+                AppPartitionInfo(
+                    label = p.label,
+                    offset = p.offset,
+                    subtypeName = AppPartitionInfo.subtypeName(p.subtype),
+                    info = info,
+                )
+            }
+            log(LogLevel.INFO, "Read ${appPartitions.size} app partition(s)")
+
+            if (autoReset) loader.resetTarget()
+            return DeviceFirmwareInfo(chip, mac, flashSize, bootloader, appPartitions)
+        } catch (e: Exception) {
+            log(LogLevel.ERROR, "Read device info failed: ${e.message}")
+            throw e
+        } finally {
+            loader.close()
+            transport.closeCurrentPort()
+        }
+    }
+
+    private fun findPartitionTable(loader: EspLoaderNative): List<EspPartition> {
+        for (offset in PARTITION_TABLE_CANDIDATES) {
+            val parsed = runCatching {
+                EspPartitionTable.parse(loader.flashRead(offset, EspPartitionTable.MAX_SIZE))
+            }.getOrDefault(emptyList())
+            if (parsed.isNotEmpty()) {
+                if (offset != EspPartitionTable.DEFAULT_OFFSET) {
+                    log(LogLevel.INFO, "Partition table found at 0x${offset.toString(16)} (non-default)")
+                }
+                return parsed
+            }
+        }
+        log(LogLevel.WARN, "No partition table found at common offsets")
+        return emptyList()
     }
 
     /** Runs the full flash plan (one or more binaries) and returns the identity of the chip that was flashed. */
@@ -251,5 +322,11 @@ class FlashEngine(private val usbRepository: UsbDeviceRepository) {
 
     private companion object {
         const val BLOCK_SIZE = 4096
+
+        /** Common CONFIG_PARTITION_TABLE_OFFSET values, default first. */
+        val PARTITION_TABLE_CANDIDATES = listOf(
+            EspPartitionTable.DEFAULT_OFFSET, // 0x8000
+            0x9000L, 0xA000L, 0xB000L, 0xC000L, 0xD000L, 0xE000L, 0xF000L, 0x10000L,
+        )
     }
 }

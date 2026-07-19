@@ -78,6 +78,20 @@ class EspLoaderNative(
         checked(nativeVerifyMd5(handle, address, size, expectedMd5))
     }
 
+    /** Reads [length] bytes of the target's flash starting at [address] (works with or without the stub). */
+    fun flashRead(address: Long, length: Int): ByteArray {
+        val out = ByteArray(length)
+        checked(nativeFlashRead(handle, address, out, length))
+        return out
+    }
+
+    /** Detects the attached flash chip's size in bytes. */
+    fun detectFlashSize(): Long {
+        val out = LongArray(1)
+        checked(nativeDetectFlashSize(handle, out))
+        return out[0]
+    }
+
     fun resetTarget() = nativeResetTarget(handle)
 
     override fun close() {
@@ -123,6 +137,8 @@ class EspLoaderNative(
     private external fun nativeFlashDeflateWrite(handle: Long, payload: ByteArray, size: Int): Int
     private external fun nativeFlashDeflateFinish(handle: Long): Int
     private external fun nativeVerifyMd5(handle: Long, address: Long, size: Long, expectedMd5: ByteArray): Int
+    private external fun nativeFlashRead(handle: Long, address: Long, out: ByteArray, length: Int): Int
+    private external fun nativeDetectFlashSize(handle: Long, outSize: LongArray): Int
     private external fun nativeResetTarget(handle: Long)
 
     companion object {

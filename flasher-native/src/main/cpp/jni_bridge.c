@@ -214,6 +214,39 @@ Java_com_espotg_flasher_EspLoaderNative_nativeVerifyMd5(JNIEnv *env, jobject thi
     return (jint) err;
 }
 
+JNIEXPORT jint JNICALL
+Java_com_espotg_flasher_EspLoaderNative_nativeFlashRead(JNIEnv *env, jobject thiz, jlong handle,
+                                                         jlong address, jbyteArray out, jint length) {
+    (void) thiz;
+    flasher_ctx_t *ctx = ctx_from_handle(env, handle);
+    if (ctx == NULL) {
+        return ESP_LOADER_ERROR_INVALID_PARAM;
+    }
+    jbyte *buf = (*env)->GetByteArrayElements(env, out, NULL);
+    esp_loader_error_t err = esp_loader_flash_read(
+        &ctx->loader, (uint8_t *) buf, (uint32_t) address, (uint32_t) length);
+    /* 0 = JNI_COMMIT+free: copy the read bytes back to the Java array. */
+    (*env)->ReleaseByteArrayElements(env, out, buf, 0);
+    return (jint) err;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_espotg_flasher_EspLoaderNative_nativeDetectFlashSize(JNIEnv *env, jobject thiz, jlong handle,
+                                                               jlongArray out_size) {
+    (void) thiz;
+    flasher_ctx_t *ctx = ctx_from_handle(env, handle);
+    if (ctx == NULL) {
+        return ESP_LOADER_ERROR_INVALID_PARAM;
+    }
+    uint32_t size = 0;
+    esp_loader_error_t err = esp_loader_flash_detect_size(&ctx->loader, &size);
+    if (err == ESP_LOADER_SUCCESS) {
+        jlong s = (jlong) size;
+        (*env)->SetLongArrayRegion(env, out_size, 0, 1, &s);
+    }
+    return (jint) err;
+}
+
 JNIEXPORT void JNICALL
 Java_com_espotg_flasher_EspLoaderNative_nativeResetTarget(JNIEnv *env, jobject thiz, jlong handle) {
     (void) thiz;
