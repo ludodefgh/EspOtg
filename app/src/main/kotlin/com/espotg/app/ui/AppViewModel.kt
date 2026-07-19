@@ -8,6 +8,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.espotg.app.data.DeviceProfile
 import com.espotg.app.data.DeviceProfileRepository
+import com.espotg.app.data.GitHubReleaseRepository
 import com.espotg.app.data.db.EspOtgDatabase
 import com.espotg.app.flash.FlashEngine
 import com.espotg.app.usb.PortOccupant
@@ -24,8 +25,11 @@ import com.espotg.core.LogLevel
 import com.espotg.core.LogLine
 import com.espotg.core.OffsetPresets
 import com.espotg.core.TargetChip
+import com.espotg.core.github.GitHubAsset
+import com.espotg.core.github.GitHubRelease
 import com.hoho.android.usbserial.driver.UsbSerialDriver
 import com.hoho.android.usbserial.driver.UsbSerialPort
+import java.io.File
 import java.io.IOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -56,6 +60,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val usbRepository = UsbDeviceRepository(application)
     val profileRepository = DeviceProfileRepository(EspOtgDatabase.getInstance(application).deviceProfileDao())
     val flashEngine = FlashEngine(usbRepository)
+    private val githubRepository = GitHubReleaseRepository(application.cacheDir)
 
     /**
      * Session-scoped log buffer, shared by every screen (Connect/Flash both
@@ -137,6 +142,90 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val _deviceInfoLoading = MutableStateFlow(false)
     val deviceInfoLoading: StateFlow<Boolean> = _deviceInfoLoading
 
+    // --- Linked GitHub repo + releases (issue #2) ---
+    private val _boundRepo = MutableStateFlow<String?>(null)
+    val boundRepo: StateFlow<String?> = _boundRepo
+    private val _releases = MutableStateFlow<List<GitHubRelease>>(emptyList())
+    val releases: StateFlow<List<GitHubRelease>> = _releases
+    private val _releasesLoading = MutableStateFlow(false)
+    val releasesLoading: StateFlow<Boolean> = _releasesLoading
+    private val _releasesError = MutableStateFlow<String?>(null)
+    val releasesError: StateFlow<String?> = _releasesError
+    private val _downloadingAsset = MutableStateFlow<String?>(null)
+    val downloadingAsset: StateFlow<String?> = _downloadingAsset
+
+    /** MAC of the currently identified device, or null - needed to persist the repo binding. */
+    private val connectedMac: String?
+        get() = (_connectionStatus.value as? ConnectionStatus.Identified)?.identity?.macAddress
+
+    fun bindRepo(input: String) {
+        val ref = githubRepository.parseRepoRef(input) ?: run {
+            _releasesError.value = "Not a valid repo (use owner/repo or a github.com URL)"
+            return
+        }
+        val mac = connectedMac ?: run {
+            logToSession("Connect and identify a device before linking a repo")
+            return
+        }
+        viewModelScope.launch {
+            val existing = profileRepository.findByMac(mac)
+            val chip = (_connectionStatus.value as? ConnectionStatus.Identified)?.identity?.chipType
+            val profile = existing?.copy(gitRepo = ref.slug) ?: DeviceProfile(
+                macAddress = mac,
+                chipType = chip ?: TargetChip.ESP32,
+                usbSerialNumber = _selectedDriver.value?.device?.let { usbRepository.readUsbSerialNumber(it) },
+                label = null,
+                flashOptions = _currentPlan.value.options,
+                flashEntries = emptyList(),
+                lastUsedAtEpochMs = System.currentTimeMillis(),
+                gitRepo = ref.slug,
+            )
+            profileRepository.save(profile)
+            _boundRepo.value = ref.slug
+            _releasesError.value = null
+        }
+    }
+
+    fun unbindRepo() {
+        val mac = connectedMac ?: return
+        viewModelScope.launch {
+            profileRepository.findByMac(mac)?.let { profileRepository.save(it.copy(gitRepo = null)) }
+            _boundRepo.value = null
+            _releases.value = emptyList()
+        }
+    }
+
+    fun fetchReleases() {
+        val slug = _boundRepo.value ?: return
+        val ref = githubRepository.parseRepoRef(slug) ?: return
+        _releasesLoading.value = true
+        _releasesError.value = null
+        viewModelScope.launch {
+            try {
+                _releases.value = githubRepository.fetchReleases(ref)
+            } catch (e: Exception) {
+                _releasesError.value = e.message ?: "Failed to fetch releases"
+            } finally {
+                _releasesLoading.value = false
+            }
+        }
+    }
+
+    /** Downloads a release asset and adds it to the flash queue as a normal entry. */
+    fun downloadAndAddAsset(asset: GitHubAsset) {
+        _downloadingAsset.value = asset.name
+        viewModelScope.launch {
+            try {
+                val file = githubRepository.downloadAsset(asset)
+                addBinaryFromFile(file, asset.name)
+            } catch (e: Exception) {
+                _releasesError.value = "Download failed: ${e.message}"
+            } finally {
+                _downloadingAsset.value = null
+            }
+        }
+    }
+
     private val _monitorLines = MutableStateFlow<List<String>>(emptyList())
     val monitorLines: StateFlow<List<String>> = _monitorLines
     private val _monitorRunning = MutableStateFlow(false)
@@ -181,8 +270,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 val identity = withContext(Dispatchers.IO) {
                     flashEngine.identify(driver, autoReset = _autoBootloaderReset.value)
                 }
-                val loadedProfile = profileRepository.findByChipIdentity(identity)?.also { applyProfile(it) } != null
-                _connectionStatus.value = ConnectionStatus.Identified(identity, loadedProfile)
+                val profile = profileRepository.findByChipIdentity(identity)?.also { applyProfile(it) }
+                _boundRepo.value = profile?.gitRepo
+                _releases.value = emptyList()
+                _connectionStatus.value = ConnectionStatus.Identified(identity, loadedProfile = profile != null)
             } catch (e: Exception) {
                 _connectionStatus.value = ConnectionStatus.Failed(e.message ?: "Connection failed")
             }
@@ -191,6 +282,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun applyProfile(profile: DeviceProfile) {
         _currentPlan.value = FlashPlan(entries = profile.flashEntries, options = profile.flashOptions)
+        _boundRepo.value = profile.gitRepo
     }
 
     fun addBinary(uri: Uri) {
@@ -203,22 +295,33 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             context.contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize } ?: 0L
         }.getOrDefault(0L)
 
-        val chipType = (_connectionStatus.value as? ConnectionStatus.Identified)?.identity?.chipType ?: TargetChip.ESP32
-        val usedOffsets = _currentPlan.value.entries.map { it.offset }
-        val nextOffset = OffsetPresets.forChip(chipType).map { it.second }.firstOrNull { it !in usedOffsets } ?: HexOffset.ZERO
-
         // Reading only the header region is enough for parsing (app_desc ends at
         // ~0xB0, bootloader_desc at ~0x60) and avoids loading a multi-MB image
         // into memory just to show its tags.
         val info = runCatching {
-            context.contentResolver.openInputStream(uri)?.use { stream ->
-                val head = ByteArray(1024)
-                val read = stream.read(head)
-                if (read > 0) EspBinaryInfo.parse(head.copyOf(read)) else null
-            }
+            context.contentResolver.openInputStream(uri)?.use { parseHeader(it) }
         }.getOrNull()
 
-        val entry = FlashEntry(uri = uri.toString(), displayName = displayName, sizeBytes = size, offset = nextOffset, info = info)
+        addEntry(uri.toString(), displayName, size, info)
+    }
+
+    /** Adds a downloaded/local file (e.g. a GitHub release asset) to the flash queue. */
+    fun addBinaryFromFile(file: File, displayName: String) {
+        val info = runCatching { file.inputStream().use { parseHeader(it) } }.getOrNull()
+        addEntry(Uri.fromFile(file).toString(), displayName, file.length(), info)
+    }
+
+    private fun parseHeader(stream: java.io.InputStream): EspBinaryInfo? {
+        val head = ByteArray(1024)
+        val read = stream.read(head)
+        return if (read > 0) EspBinaryInfo.parse(head.copyOf(read)) else null
+    }
+
+    private fun addEntry(uri: String, displayName: String, size: Long, info: EspBinaryInfo?) {
+        val chipType = (_connectionStatus.value as? ConnectionStatus.Identified)?.identity?.chipType ?: TargetChip.ESP32
+        val usedOffsets = _currentPlan.value.entries.map { it.offset }
+        val nextOffset = OffsetPresets.forChip(chipType).map { it.second }.firstOrNull { it !in usedOffsets } ?: HexOffset.ZERO
+        val entry = FlashEntry(uri = uri, displayName = displayName, sizeBytes = size, offset = nextOffset, info = info)
         _currentPlan.update { it.copy(entries = it.entries + entry) }
     }
 

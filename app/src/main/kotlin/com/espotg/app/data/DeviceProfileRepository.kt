@@ -20,6 +20,7 @@ data class DeviceProfile(
     val flashOptions: FlashOptions,
     val flashEntries: List<FlashEntry>,
     val lastUsedAtEpochMs: Long,
+    val gitRepo: String? = null,
 )
 
 /** Loads/saves the last-used [DeviceProfile] per physical device - see ChipIdentity for the identity model. */
@@ -39,6 +40,8 @@ class DeviceProfileRepository(private val dao: DeviceProfileDao) {
     /** Pre-connect lookup, before a chip's MAC is known - see ChipIdentity. */
     suspend fun findByUsbSerialNumber(serial: String): DeviceProfile? = dao.findByUsbSerialNumber(serial)?.toModel()
 
+    suspend fun findByMac(mac: String): DeviceProfile? = dao.findByMac(mac)?.toModel()
+
     suspend fun save(profile: DeviceProfile) = dao.upsert(profile.toEntity())
 
     suspend fun delete(profile: DeviceProfile) = dao.delete(profile.toEntity())
@@ -51,6 +54,7 @@ class DeviceProfileRepository(private val dao: DeviceProfileDao) {
         flashOptions = json.decodeFromString<FlashOptions>(lastFlashOptionsJson),
         flashEntries = json.decodeFromString<List<FlashEntry>>(lastEntriesJson),
         lastUsedAtEpochMs = lastUsedAtEpochMs,
+        gitRepo = gitRepo,
     )
 
     private fun DeviceProfile.toEntity() = DeviceProfileEntity(
@@ -61,5 +65,6 @@ class DeviceProfileRepository(private val dao: DeviceProfileDao) {
         lastFlashOptionsJson = json.encodeToString(flashOptions),
         lastEntriesJson = json.encodeToString(flashEntries),
         lastUsedAtEpochMs = lastUsedAtEpochMs,
+        gitRepo = gitRepo,
     )
 }

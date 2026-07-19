@@ -9,12 +9,14 @@ import com.espotg.app.ui.connect.ConnectScreen
 import com.espotg.app.ui.flash.FlashScreen
 import com.espotg.app.ui.monitor.MonitorScreen
 import com.espotg.app.ui.profiles.ProfilesScreen
+import com.espotg.app.ui.releases.ReleasesScreen
 
 private object Routes {
     const val CONNECT = "connect"
     const val FLASH = "flash"
     const val MONITOR = "monitor"
     const val PROFILES = "profiles"
+    const val RELEASES = "releases"
 }
 
 @Composable
@@ -29,10 +31,17 @@ fun EspOtgNavHost(appViewModel: AppViewModel, navController: NavHostController =
             )
         }
         composable(Routes.FLASH) {
-            FlashScreen(appViewModel = appViewModel, onOpenMonitor = { navController.navigate(Routes.MONITOR) })
+            FlashScreen(
+                appViewModel = appViewModel,
+                onOpenMonitor = { navController.navigate(Routes.MONITOR) },
+                onOpenReleases = { navController.navigate(Routes.RELEASES) },
+            )
         }
         composable(Routes.MONITOR) {
             MonitorScreen(appViewModel = appViewModel)
+        }
+        composable(Routes.RELEASES) {
+            ReleasesScreen(appViewModel = appViewModel, onBack = { navController.popBackStack() })
         }
         composable(Routes.PROFILES) {
             ProfilesScreen(

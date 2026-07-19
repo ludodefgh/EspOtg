@@ -26,6 +26,8 @@ data class DeviceProfileEntity(
     val lastFlashOptionsJson: String,
     val lastEntriesJson: String,
     val lastUsedAtEpochMs: Long,
+    /** Optional "owner/repo" this device is linked to, for browsing/flashing its GitHub releases. */
+    val gitRepo: String? = null,
 )
 
 @Dao

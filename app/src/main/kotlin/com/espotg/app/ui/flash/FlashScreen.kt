@@ -31,6 +31,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -60,7 +61,7 @@ import com.espotg.core.HexOffset
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun FlashScreen(appViewModel: AppViewModel, onOpenMonitor: () -> Unit) {
+fun FlashScreen(appViewModel: AppViewModel, onOpenMonitor: () -> Unit, onOpenReleases: () -> Unit) {
     val plan by appViewModel.currentPlan.collectAsStateWithLifecycle()
     val flashRunning by appViewModel.flashRunning.collectAsStateWithLifecycle()
     val progress by appViewModel.flashEngine.progress.collectAsStateWithLifecycle()
@@ -68,6 +69,7 @@ fun FlashScreen(appViewModel: AppViewModel, onOpenMonitor: () -> Unit) {
     val logs by appViewModel.sessionLogs.collectAsStateWithLifecycle()
     val deviceInfo by appViewModel.deviceInfo.collectAsStateWithLifecycle()
     val deviceInfoLoading by appViewModel.deviceInfoLoading.collectAsStateWithLifecycle()
+    val boundRepo by appViewModel.boundRepo.collectAsStateWithLifecycle()
 
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         uris.forEach { appViewModel.addBinary(it) }
@@ -100,6 +102,15 @@ fun FlashScreen(appViewModel: AppViewModel, onOpenMonitor: () -> Unit) {
                     }
                 }
                 deviceInfo?.let { DeviceInfoCard(it) }
+
+                Spacer(Modifier.height(8.dp))
+                LinkedRepoSection(
+                    boundRepo = boundRepo,
+                    onBind = { appViewModel.bindRepo(it) },
+                    onUnbind = { appViewModel.unbindRepo() },
+                    onBrowse = onOpenReleases,
+                )
+
                 Spacer(Modifier.height(8.dp))
                 HorizontalDivider()
                 Spacer(Modifier.height(8.dp))
@@ -218,6 +229,47 @@ private fun InfoBadge(label: String, containerColor: Color) {
             style = MaterialTheme.typography.labelSmall,
             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
         )
+    }
+}
+
+@Composable
+private fun LinkedRepoSection(
+    boundRepo: String?,
+    onBind: (String) -> Unit,
+    onUnbind: () -> Unit,
+    onBrowse: () -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text("Linked Git repo", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(4.dp))
+            if (boundRepo == null) {
+                var input by remember { mutableStateOf("") }
+                Text(
+                    "Connect a device, then link it to a GitHub repo to browse and flash its releases.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Spacer(Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = input,
+                        onValueChange = { input = it },
+                        label = { Text("owner/repo or URL") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Button(onClick = { onBind(input) }, enabled = input.isNotBlank()) { Text("Link") }
+                }
+            } else {
+                Text(boundRepo, style = MaterialTheme.typography.bodyMedium)
+                Spacer(Modifier.height(4.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = onBrowse) { Text("Browse releases") }
+                    OutlinedButton(onClick = onUnbind) { Text("Unlink") }
+                }
+            }
+        }
     }
 }
 
