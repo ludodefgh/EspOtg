@@ -16,6 +16,8 @@ data class FlashEntry(
     val sizeBytes: Long,
     val offset: HexOffset,
     val forceRawData: Boolean = false,
+    /** Metadata parsed from the binary's own header at add time, for display. Null if not parsed/parseable. */
+    val info: EspBinaryInfo? = null,
 )
 
 @Serializable

@@ -4,6 +4,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -12,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -25,6 +28,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -35,12 +39,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.espotg.app.ui.AppViewModel
 import com.espotg.app.ui.components.FlashOptionsPanel
 import com.espotg.app.ui.components.HexOffsetField
 import com.espotg.app.ui.components.LogConsole
+import com.espotg.core.EspBinaryInfo
+import com.espotg.core.EspImageType
 import com.espotg.core.FlashEntry
 import com.espotg.core.FlashEntryProgress
 import com.espotg.core.FlashStepState
@@ -144,8 +151,51 @@ private fun FlashEntryRow(
             HexOffsetField(value = entry.offset, onValueChange = onOffsetChange, modifier = Modifier.width(120.dp))
             IconButton(onClick = onRemove) { Icon(Icons.Default.Delete, contentDescription = "Remove") }
         }
+        entry.info?.let { BinaryInfoBadges(it) }
         if (progress != null && progress.state != FlashStepState.PENDING) {
             LinearProgressIndicator(progress = { progress.fraction }, modifier = Modifier.fillMaxWidth())
         }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun BinaryInfoBadges(info: EspBinaryInfo) {
+    val badges = buildList {
+        when (info.type) {
+            EspImageType.APP -> add("App" to MaterialTheme.colorScheme.tertiaryContainer)
+            EspImageType.BOOTLOADER -> add("Bootloader" to MaterialTheme.colorScheme.secondaryContainer)
+            EspImageType.ESP_IMAGE -> add("ESP image" to MaterialTheme.colorScheme.secondaryContainer)
+            EspImageType.DATA -> add("Raw data" to MaterialTheme.colorScheme.surfaceVariant)
+        }
+        info.chipName?.let { add(it to MaterialTheme.colorScheme.primaryContainer) }
+        info.projectName?.let { add(it to MaterialTheme.colorScheme.primaryContainer) }
+        info.appVersion?.let { add(it to MaterialTheme.colorScheme.tertiaryContainer) }
+        info.idfVersion?.let { add("IDF ${it.removePrefix("v")}" to MaterialTheme.colorScheme.surfaceVariant) }
+        info.compileDate?.let { date ->
+            val stamp = info.compileTime?.let { "$date $it" } ?: date
+            add(stamp to MaterialTheme.colorScheme.surfaceVariant)
+        }
+        listOfNotNull(info.flashMode, info.flashFreq, info.flashSize).takeIf { it.isNotEmpty() }?.let {
+            add(it.joinToString(" · ") to MaterialTheme.colorScheme.surfaceVariant)
+        }
+    }
+    FlowRow(
+        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        badges.forEach { (label, color) -> InfoBadge(label, color) }
+    }
+}
+
+@Composable
+private fun InfoBadge(label: String, containerColor: Color) {
+    Surface(color = containerColor, shape = RoundedCornerShape(6.dp)) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+        )
     }
 }

@@ -14,6 +14,7 @@ import com.espotg.app.usb.PortOccupant
 import com.espotg.app.usb.UsbDeviceRepository
 import com.espotg.app.usb.UsbPortCoordinator
 import com.espotg.core.ChipIdentity
+import com.espotg.core.EspBinaryInfo
 import com.espotg.core.FlashEntry
 import com.espotg.core.FlashOptions
 import com.espotg.core.FlashPlan
@@ -198,7 +199,18 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val usedOffsets = _currentPlan.value.entries.map { it.offset }
         val nextOffset = OffsetPresets.forChip(chipType).map { it.second }.firstOrNull { it !in usedOffsets } ?: HexOffset.ZERO
 
-        val entry = FlashEntry(uri = uri.toString(), displayName = displayName, sizeBytes = size, offset = nextOffset)
+        // Reading only the header region is enough for parsing (app_desc ends at
+        // ~0xB0, bootloader_desc at ~0x60) and avoids loading a multi-MB image
+        // into memory just to show its tags.
+        val info = runCatching {
+            context.contentResolver.openInputStream(uri)?.use { stream ->
+                val head = ByteArray(1024)
+                val read = stream.read(head)
+                if (read > 0) EspBinaryInfo.parse(head.copyOf(read)) else null
+            }
+        }.getOrNull()
+
+        val entry = FlashEntry(uri = uri.toString(), displayName = displayName, sizeBytes = size, offset = nextOffset, info = info)
         _currentPlan.update { it.copy(entries = it.entries + entry) }
     }
 
