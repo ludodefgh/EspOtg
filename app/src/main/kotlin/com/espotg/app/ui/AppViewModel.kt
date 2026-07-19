@@ -66,6 +66,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val _sessionLogs = MutableStateFlow<List<LogLine>>(emptyList())
     val sessionLogs: StateFlow<List<LogLine>> = _sessionLogs
 
+    // Auto-refreshes the device list on USB attach/detach and drops a selected
+    // device that's been unplugged - without this the UsbSerialDriver held in
+    // _selectedDriver goes stale across a detach/reattach and the next openPort()
+    // on it crashes (the monitor reconnect crash).
+    private val attachDetachReceiver = usbRepository.registerAttachDetachReceiver { onUsbDevicesChanged() }
+
     init {
         viewModelScope.launch {
             flashEngine.logs.collect { line ->
@@ -80,6 +86,27 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
+    }
+
+    private fun onUsbDevicesChanged() {
+        val selected = _selectedDriver.value ?: return
+        val stillPresent = usbRepository.availableDrivers.value.any {
+            it.device.deviceId == selected.device.deviceId
+        }
+        if (!stillPresent) {
+            // The selected device was unplugged: tear down any monitor session and
+            // force re-selection so a fresh driver (with fresh permission) is used.
+            stopMonitor()
+            _selectedDriver.value = null
+            if (_connectionStatus.value is ConnectionStatus.Identified) {
+                _connectionStatus.value = ConnectionStatus.Idle
+            }
+        }
+    }
+
+    override fun onCleared() {
+        runCatching { getApplication<Application>().unregisterReceiver(attachDetachReceiver) }
+        super.onCleared()
     }
 
     fun clearSessionLogs() {
@@ -265,12 +292,24 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun startMonitor(baudRate: Int) {
-        val driver = _selectedDriver.value ?: return
-        if (!UsbPortCoordinator.tryAcquire(PortOccupant.MONITOR)) return
+        val driver = _selectedDriver.value ?: run {
+            _monitorLines.update { it + "Cannot start: no device selected" }
+            return
+        }
+        // A monitor session that ended on detach may not have released the port
+        // yet; if it's genuinely busy, tell the user instead of silently no-op'ing.
+        if (!UsbPortCoordinator.tryAcquire(PortOccupant.MONITOR)) {
+            _monitorLines.update { it + "Cannot start: serial port is busy" }
+            return
+        }
 
         monitorJob = viewModelScope.launch(Dispatchers.IO) {
             val lineBuilder = StringBuilder()
             try {
+                // openPort can throw (stale/detached device, permission revoked on
+                // reattach, etc.). Anything thrown here MUST be caught: an
+                // uncaught exception in this launched coroutine crashes the app -
+                // exactly the "reconnect then Start" crash.
                 val port = usbRepository.openPort(driver)
                 port.setParameters(baudRate, UsbSerialPort.DATABITS_8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE)
                 monitorPort = port
@@ -296,6 +335,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     }
                 }
+            } catch (e: Exception) {
+                _monitorLines.update { it + "Monitor error: ${e.message} - unplug/replug and re-select the device" }
             } finally {
                 if (lineBuilder.isNotEmpty()) {
                     _monitorLines.update { it + lineBuilder.toString() }
