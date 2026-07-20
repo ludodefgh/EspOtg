@@ -102,7 +102,7 @@ fun ReleasesScreen(appViewModel: AppViewModel, onOpenDrawer: () -> Unit, onBack:
                         ReleaseCard(
                             release = release,
                             downloadingAsset = downloading,
-                            onDownload = { asset -> appViewModel.downloadAndAddAsset(asset) },
+                            onDownload = { asset -> appViewModel.downloadAndAddAsset(release, asset) },
                         )
                     }
                 }

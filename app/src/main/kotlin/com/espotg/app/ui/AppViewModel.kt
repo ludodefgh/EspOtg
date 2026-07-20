@@ -33,6 +33,7 @@ import java.io.File
 import java.io.IOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -179,11 +180,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
         viewModelScope.launch {
             val existing = profileRepository.findByMac(mac)
-            val chip = (_connectionStatus.value as? ConnectionStatus.Identified)?.identity?.chipType
+            val identity = (_connectionStatus.value as? ConnectionStatus.Identified)?.identity
+            val serial = identity?.usbSerialNumber
+                ?: _selectedDriver.value?.device?.let { dev ->
+                    withContext(Dispatchers.IO) { usbRepository.readUsbSerialNumber(dev) }
+                }
             val profile = existing?.copy(gitRepo = ref.slug) ?: DeviceProfile(
                 macAddress = mac,
-                chipType = chip ?: TargetChip.ESP32,
-                usbSerialNumber = _selectedDriver.value?.device?.let { usbRepository.readUsbSerialNumber(it) },
+                chipType = identity?.chipType ?: TargetChip.ESP32,
+                usbSerialNumber = serial,
                 label = null,
                 flashOptions = _currentPlan.value.options,
                 flashEntries = emptyList(),
@@ -222,11 +227,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** Downloads a release asset and adds it to the flash queue as a normal entry. */
-    fun downloadAndAddAsset(asset: GitHubAsset) {
+    fun downloadAndAddAsset(release: GitHubRelease, asset: GitHubAsset) {
         _downloadingAsset.value = asset.name
         viewModelScope.launch {
             try {
-                val file = githubRepository.downloadAsset(asset)
+                val file = githubRepository.downloadAsset(asset, release.tagName)
                 addBinaryFromFile(file, asset.name)
             } catch (e: Exception) {
                 _releasesError.value = "Download failed: ${e.message}"
@@ -261,6 +266,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         if (_selectedDriver.value?.device?.deviceId != driver.device.deviceId) {
             clearSessionLogs()
             _deviceInfo.value = null
+            _boundRepo.value = null
         }
         _selectedDriver.value = driver
         _connectionStatus.value = ConnectionStatus.RequestingPermission
@@ -271,22 +277,42 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
 
-            usbRepository.readUsbSerialNumber(driver.device)?.let { serial ->
-                profileRepository.findByUsbSerialNumber(serial)?.let { applyProfile(it) }
+            // Speculative pre-fill from the USB serial number (readable before the
+            // MAC-yielding bootloader sync). Non-authoritative: USB serials aren't
+            // unique across cheap CP210x/CH340 boards, so it's reconciled against
+            // the MAC below and discarded if this chip has no profile of its own.
+            val serial = withContext(Dispatchers.IO) { usbRepository.readUsbSerialNumber(driver.device) }
+            var speculative = false
+            serial?.let { s ->
+                profileRepository.findByUsbSerialNumber(s)?.let { applyProfile(it); speculative = true }
             }
 
+            // Identify opens the port - gate it on the coordinator so it can't run
+            // concurrently with an active flash or monitor session on the same port.
+            if (!UsbPortCoordinator.tryAcquire(PortOccupant.FLASHER)) {
+                _connectionStatus.value = ConnectionStatus.Failed("Serial port is busy - stop the monitor or flash first")
+                return@launch
+            }
             _connectionStatus.value = ConnectionStatus.Identifying
             try {
                 val identity = withContext(Dispatchers.IO) {
                     flashEngine.identify(driver, autoReset = _autoBootloaderReset.value)
                 }
-                val profile = profileRepository.findByChipIdentity(identity)?.also { applyProfile(it) }
-                _boundRepo.value = profile?.gitRepo
+                // MAC is the source of truth. Apply the MAC-matched profile if any;
+                // otherwise discard any speculative serial-matched plan so a
+                // different chip's binaries can't linger and get flashed.
+                val macProfile = profileRepository.findByMac(identity.macAddress)
+                when {
+                    macProfile != null -> applyProfile(macProfile)
+                    speculative -> resetPlan()
+                }
                 _releases.value = emptyList()
-                _connectionStatus.value = ConnectionStatus.Identified(identity, loadedProfile = profile != null)
+                _connectionStatus.value = ConnectionStatus.Identified(identity, loadedProfile = macProfile != null)
                 _connectedEvent.tryEmit(Unit)
             } catch (e: Exception) {
                 _connectionStatus.value = ConnectionStatus.Failed(e.message ?: "Connection failed")
+            } finally {
+                UsbPortCoordinator.release(PortOccupant.FLASHER)
             }
         }
     }
@@ -294,6 +320,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private fun applyProfile(profile: DeviceProfile) {
         _currentPlan.value = FlashPlan(entries = profile.flashEntries, options = profile.flashOptions)
         _boundRepo.value = profile.gitRepo
+    }
+
+    /** Clears the flash queue back to an empty plan with default options. */
+    private fun resetPlan() {
+        _currentPlan.value = FlashPlan(entries = emptyList(), options = FlashOptions())
+        _boundRepo.value = null
     }
 
     fun addBinary(uri: Uri) {
@@ -405,15 +437,19 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val identity = flashEngine.runFlashPlan(getApplication(), driver, plan)
+                // Preserve the existing gitRepo binding (Upsert overwrites the whole
+                // row) and reuse the serial already read during the flash instead of
+                // a second blocking control transfer.
                 profileRepository.save(
                     DeviceProfile(
                         macAddress = identity.macAddress,
                         chipType = identity.chipType,
-                        usbSerialNumber = usbRepository.readUsbSerialNumber(driver.device),
+                        usbSerialNumber = identity.usbSerialNumber,
                         label = null,
                         flashOptions = plan.options,
                         flashEntries = plan.entries,
                         lastUsedAtEpochMs = System.currentTimeMillis(),
+                        gitRepo = _boundRepo.value,
                     ),
                 )
                 _connectionStatus.value = ConnectionStatus.Identified(identity, loadedProfile = true)
@@ -514,15 +550,28 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         _monitorLines.value = emptyList()
     }
 
-    fun setMonitorControlLines(dtr: Boolean? = null, rts: Boolean? = null) {
+    fun pulseMonitorDtr() = pulseControlLine { port, level -> port.setDTR(level) }
+
+    fun pulseMonitorRts() = pulseControlLine { port, level -> port.setRTS(level) }
+
+    /**
+     * Asserts a control line, holds it for [PULSE_WIDTH_MS], then releases it -
+     * off the main thread (USB control transfers block) and with a real, defined
+     * pulse width, unlike a synchronous true-then-false on the UI thread.
+     */
+    private fun pulseControlLine(set: (UsbSerialPort, Boolean) -> Unit) {
         val port = monitorPort ?: return
-        runCatching {
-            dtr?.let { port.setDTR(it) }
-            rts?.let { port.setRTS(it) }
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                set(port, true)
+                delay(PULSE_WIDTH_MS)
+                set(port, false)
+            }
         }
     }
 
     private companion object {
         const val MAX_SESSION_LOG_LINES = 3000
+        const val PULSE_WIDTH_MS = 100L
     }
 }

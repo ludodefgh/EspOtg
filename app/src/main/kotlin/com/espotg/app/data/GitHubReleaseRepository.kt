@@ -18,9 +18,13 @@ class GitHubReleaseRepository(private val cacheDir: File) {
     suspend fun fetchReleases(repo: RepoRef, token: String? = null): List<GitHubRelease> =
         withContext(Dispatchers.IO) { GitHubClient.fetchReleases(repo.owner, repo.repo, token) }
 
-    /** Downloads [asset] into the app cache and returns the local file. */
-    suspend fun downloadAsset(asset: GitHubAsset, token: String? = null): File = withContext(Dispatchers.IO) {
-        val dir = File(cacheDir, "downloads").apply { mkdirs() }
+    /**
+     * Downloads [asset] into the app cache and returns the local file. Files are
+     * namespaced by [releaseTag] so a same-named asset (e.g. "firmware.bin") from a
+     * different release doesn't overwrite one a saved profile still references.
+     */
+    suspend fun downloadAsset(asset: GitHubAsset, releaseTag: String, token: String? = null): File = withContext(Dispatchers.IO) {
+        val dir = File(File(cacheDir, "downloads"), sanitize(releaseTag)).apply { mkdirs() }
         val dest = File(dir, sanitize(asset.name))
         val conn = (URL(asset.browserDownloadUrl).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
@@ -38,8 +42,34 @@ class GitHubReleaseRepository(private val cacheDir: File) {
         } finally {
             conn.disconnect()
         }
+        pruneCache(dest)
         dest
     }
 
-    private fun sanitize(name: String): String = name.replace(Regex("[^A-Za-z0-9._-]"), "_")
+    /**
+     * Keeps the downloads cache under [MAX_CACHE_BYTES] by deleting the
+     * least-recently-modified files first, never touching [keep] (the file just
+     * downloaded, which callers/saved profiles are about to reference).
+     */
+    private fun pruneCache(keep: File) {
+        val root = File(cacheDir, "downloads")
+        val files = root.walkTopDown().filter { it.isFile }.toMutableList()
+        var total = files.sumOf { it.length() }
+        if (total <= MAX_CACHE_BYTES) return
+        files.sortBy { it.lastModified() } // oldest first
+        for (f in files) {
+            if (total <= MAX_CACHE_BYTES) break
+            if (f == keep) continue
+            val len = f.length()
+            if (f.delete()) total -= len
+        }
+    }
+
+    // Strip path separators and traversal - only keep a flat, safe file/dir name.
+    private fun sanitize(name: String): String =
+        name.replace(Regex("[^A-Za-z0-9._-]"), "_").trimStart('.').ifEmpty { "asset" }
+
+    private companion object {
+        const val MAX_CACHE_BYTES = 200L * 1024 * 1024 // 200 MB
+    }
 }

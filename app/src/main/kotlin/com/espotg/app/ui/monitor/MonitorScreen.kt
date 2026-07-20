@@ -101,11 +101,11 @@ fun MonitorScreen(appViewModel: AppViewModel, onOpenDrawer: () -> Unit, onBack: 
 
                 Spacer(Modifier.height(8.dp))
                 Row(modifier = Modifier.fillMaxWidth()) {
-                    OutlinedButton(onClick = { appViewModel.setMonitorControlLines(dtr = true); appViewModel.setMonitorControlLines(dtr = false) }) {
+                    OutlinedButton(onClick = { appViewModel.pulseMonitorDtr() }) {
                         Text("Pulse DTR")
                     }
                     Spacer(Modifier.width(8.dp))
-                    OutlinedButton(onClick = { appViewModel.setMonitorControlLines(rts = true); appViewModel.setMonitorControlLines(rts = false) }) {
+                    OutlinedButton(onClick = { appViewModel.pulseMonitorRts() }) {
                         Text("Pulse RTS")
                     }
                     Spacer(Modifier.width(8.dp))

@@ -106,7 +106,11 @@ class FlashEngine(private val usbRepository: UsbDeviceRepository) {
                 // next SYNC times out.
                 log(LogLevel.INFO, "Staying in bootloader (manual mode) - ready to flash")
             }
-            return ChipIdentity(macAddress = mac, chipType = chipType)
+            return ChipIdentity(
+                macAddress = mac,
+                chipType = chipType,
+                usbSerialNumber = usbRepository.readUsbSerialNumber(driver.device),
+            )
         } finally {
             loader.close()
             transport.closeCurrentPort()
@@ -207,7 +211,11 @@ class FlashEngine(private val usbRepository: UsbDeviceRepository) {
 
             log(LogLevel.INFO, "Flash complete, resetting target")
             loader.resetTarget()
-            return ChipIdentity(macAddress = mac, chipType = chipType)
+            return ChipIdentity(
+                macAddress = mac,
+                chipType = chipType,
+                usbSerialNumber = usbRepository.readUsbSerialNumber(driver.device),
+            )
         } catch (e: Exception) {
             log(LogLevel.ERROR, "Flash failed: ${e.message}")
             // Full trace in the log too: on minified release builds the message

@@ -2,7 +2,6 @@ package com.espotg.app.data
 
 import com.espotg.app.data.db.DeviceProfileDao
 import com.espotg.app.data.db.DeviceProfileEntity
-import com.espotg.core.ChipIdentity
 import com.espotg.core.FlashEntry
 import com.espotg.core.FlashOptions
 import com.espotg.core.TargetChip
@@ -30,16 +29,15 @@ class DeviceProfileRepository(private val dao: DeviceProfileDao) {
 
     fun observeAll(): Flow<List<DeviceProfile>> = dao.observeAll().map { rows -> rows.map { it.toModel() } }
 
-    /** Looks up by MAC first (source of truth), falling back to the USB serial number hint. */
-    suspend fun findByChipIdentity(identity: ChipIdentity): DeviceProfile? {
-        dao.findByMac(identity.macAddress)?.let { return it.toModel() }
-        val serial = identity.usbSerialNumber ?: return null
-        return dao.findByUsbSerialNumber(serial)?.toModel()
-    }
-
-    /** Pre-connect lookup, before a chip's MAC is known - see ChipIdentity. */
+    /**
+     * Pre-connect lookup by USB serial number, before a chip's MAC is known - a
+     * non-authoritative hint only (serials aren't unique across cheap boards); the
+     * caller reconciles against the MAC via [findByMac] once connected. See
+     * ChipIdentity.
+     */
     suspend fun findByUsbSerialNumber(serial: String): DeviceProfile? = dao.findByUsbSerialNumber(serial)?.toModel()
 
+    /** Authoritative lookup by efuse MAC - the source of truth for device identity. */
     suspend fun findByMac(mac: String): DeviceProfile? = dao.findByMac(mac)?.toModel()
 
     suspend fun save(profile: DeviceProfile) = dao.upsert(profile.toEntity())
