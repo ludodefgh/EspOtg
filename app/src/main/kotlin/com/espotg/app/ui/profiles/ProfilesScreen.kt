@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -24,21 +23,25 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.espotg.app.data.DeviceProfile
 import com.espotg.app.ui.AppViewModel
+import com.espotg.app.ui.components.BackIcon
+import com.espotg.app.ui.components.MenuIcon
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ProfilesScreen(appViewModel: AppViewModel, onBack: () -> Unit, onSelectProfile: (DeviceProfile) -> Unit) {
+fun ProfilesScreen(
+    appViewModel: AppViewModel,
+    onOpenDrawer: () -> Unit,
+    onBack: () -> Unit,
+    onSelectProfile: (DeviceProfile) -> Unit,
+) {
     val profiles by appViewModel.profileRepository.observeAll().collectAsStateWithLifecycle(initialValue = emptyList())
 
     Scaffold(
         topBar = {
             TopAppBar(
+                navigationIcon = { BackIcon(onBack) },
                 title = { Text("Saved device profiles") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                },
+                actions = { MenuIcon(onOpenDrawer) },
             )
         },
     ) { padding ->

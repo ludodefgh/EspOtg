@@ -24,14 +24,12 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -48,9 +46,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.espotg.app.ui.AppViewModel
+import com.espotg.app.ui.components.BackIcon
 import com.espotg.app.ui.components.FlashOptionsPanel
 import com.espotg.app.ui.components.HexOffsetField
 import com.espotg.app.ui.components.LogConsole
+import com.espotg.app.ui.components.MenuIcon
 import com.espotg.core.DeviceFirmwareInfo
 import com.espotg.core.EspBinaryInfo
 import com.espotg.core.EspImageType
@@ -61,7 +61,7 @@ import com.espotg.core.HexOffset
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun FlashScreen(appViewModel: AppViewModel, onOpenMonitor: () -> Unit, onOpenReleases: () -> Unit) {
+fun FlashScreen(appViewModel: AppViewModel, onOpenDrawer: () -> Unit, onBack: () -> Unit) {
     val plan by appViewModel.currentPlan.collectAsStateWithLifecycle()
     val flashRunning by appViewModel.flashRunning.collectAsStateWithLifecycle()
     val progress by appViewModel.flashEngine.progress.collectAsStateWithLifecycle()
@@ -69,24 +69,24 @@ fun FlashScreen(appViewModel: AppViewModel, onOpenMonitor: () -> Unit, onOpenRel
     val logs by appViewModel.sessionLogs.collectAsStateWithLifecycle()
     val deviceInfo by appViewModel.deviceInfo.collectAsStateWithLifecycle()
     val deviceInfoLoading by appViewModel.deviceInfoLoading.collectAsStateWithLifecycle()
-    val boundRepo by appViewModel.boundRepo.collectAsStateWithLifecycle()
 
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         uris.forEach { appViewModel.addBinary(it) }
+    }
+    val addBinaryButton: @Composable () -> Unit = {
+        OutlinedButton(onClick = { filePicker.launch(arrayOf("*/*")) }, modifier = Modifier.fillMaxWidth()) {
+            Icon(Icons.Default.Add, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text("Add binary")
+        }
     }
 
     Scaffold(
         topBar = {
             TopAppBar(
+                navigationIcon = { BackIcon(onBack) },
                 title = { Text("Flash") },
-                actions = { TextButton(onClick = onOpenMonitor) { Text("Monitor") } },
-            )
-        },
-        floatingActionButton = {
-            ExtendedFloatingActionButton(
-                onClick = { filePicker.launch(arrayOf("*/*")) },
-                icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                text = { Text("Add binary") },
+                actions = { MenuIcon(onOpenDrawer) },
             )
         },
     ) { padding ->
@@ -104,19 +104,14 @@ fun FlashScreen(appViewModel: AppViewModel, onOpenMonitor: () -> Unit, onOpenRel
                 deviceInfo?.let { DeviceInfoCard(it) }
 
                 Spacer(Modifier.height(8.dp))
-                LinkedRepoSection(
-                    boundRepo = boundRepo,
-                    onBind = { appViewModel.bindRepo(it) },
-                    onUnbind = { appViewModel.unbindRepo() },
-                    onBrowse = onOpenReleases,
-                )
-
-                Spacer(Modifier.height(8.dp))
                 HorizontalDivider()
                 Spacer(Modifier.height(8.dp))
 
+                Text("Binaries", style = MaterialTheme.typography.titleSmall)
+                Spacer(Modifier.height(4.dp))
                 if (plan.entries.isEmpty()) {
-                    Text("No binaries added yet. Tap \"Add binary\" to pick one or more .bin files.")
+                    // Empty section: the Add button is the section's content.
+                    addBinaryButton()
                 } else {
                     plan.entries.forEach { entry ->
                         FlashEntryRow(
@@ -127,6 +122,9 @@ fun FlashScreen(appViewModel: AppViewModel, onOpenMonitor: () -> Unit, onOpenRel
                         )
                         HorizontalDivider()
                     }
+                    // With entries present, Add moves to the line below the list.
+                    Spacer(Modifier.height(8.dp))
+                    addBinaryButton()
                 }
 
                 Spacer(Modifier.height(8.dp))
@@ -229,47 +227,6 @@ private fun InfoBadge(label: String, containerColor: Color) {
             style = MaterialTheme.typography.labelSmall,
             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
         )
-    }
-}
-
-@Composable
-private fun LinkedRepoSection(
-    boundRepo: String?,
-    onBind: (String) -> Unit,
-    onUnbind: () -> Unit,
-    onBrowse: () -> Unit,
-) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            Text("Linked Git repo", style = MaterialTheme.typography.titleSmall)
-            Spacer(Modifier.height(4.dp))
-            if (boundRepo == null) {
-                var input by remember { mutableStateOf("") }
-                Text(
-                    "Connect a device, then link it to a GitHub repo to browse and flash its releases.",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                Spacer(Modifier.height(4.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(
-                        value = input,
-                        onValueChange = { input = it },
-                        label = { Text("owner/repo or URL") },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Button(onClick = { onBind(input) }, enabled = input.isNotBlank()) { Text("Link") }
-                }
-            } else {
-                Text(boundRepo, style = MaterialTheme.typography.bodyMedium)
-                Spacer(Modifier.height(4.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = onBrowse) { Text("Browse releases") }
-                    OutlinedButton(onClick = onUnbind) { Text("Unlink") }
-                }
-            }
-        }
     }
 }
 

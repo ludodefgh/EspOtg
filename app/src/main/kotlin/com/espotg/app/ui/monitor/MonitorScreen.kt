@@ -32,14 +32,16 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.espotg.app.ui.AppViewModel
+import com.espotg.app.ui.components.BackIcon
 import com.espotg.app.ui.components.LogConsole
+import com.espotg.app.ui.components.MenuIcon
 import com.espotg.core.LogLevel
 import com.espotg.core.LogLine
 import com.hoho.android.usbserial.driver.UsbSerialDriver
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MonitorScreen(appViewModel: AppViewModel) {
+fun MonitorScreen(appViewModel: AppViewModel, onOpenDrawer: () -> Unit, onBack: () -> Unit) {
     val selectedDriver by appViewModel.selectedDriver.collectAsStateWithLifecycle()
     val drivers by appViewModel.usbRepository.availableDrivers.collectAsStateWithLifecycle()
     val selectError by appViewModel.monitorSelectError.collectAsStateWithLifecycle()
@@ -49,7 +51,15 @@ fun MonitorScreen(appViewModel: AppViewModel) {
 
     LaunchedEffect(Unit) { appViewModel.refreshDevices() }
 
-    Scaffold(topBar = { TopAppBar(title = { Text("Serial monitor") }) }) { padding ->
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                navigationIcon = { BackIcon(onBack) },
+                title = { Text("Serial monitor") },
+                actions = { MenuIcon(onOpenDrawer) },
+            )
+        },
+    ) { padding ->
         Column(modifier = Modifier.padding(padding).fillMaxSize().padding(16.dp)) {
             if (selectedDriver == null) {
                 Text("Select a USB device to monitor", style = MaterialTheme.typography.titleMedium)

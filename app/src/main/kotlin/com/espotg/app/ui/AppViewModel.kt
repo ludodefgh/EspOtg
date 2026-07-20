@@ -33,7 +33,9 @@ import java.io.File
 import java.io.IOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
@@ -125,6 +127,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         _sessionLogs.update { it + LogLine(System.currentTimeMillis(), LogLevel.WARN, message) }
     }
 
+    // One-shot "a device just connected" signal - the Connect screen navigates to
+    // Flash on this, NOT on connectionStatus being Identified (otherwise opening
+    // the Devices screen from the drawer while already connected would bounce
+    // straight back to Flash).
+    private val _connectedEvent = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val connectedEvent: SharedFlow<Unit> = _connectedEvent
+
     private val _selectedDriver = MutableStateFlow<UsbSerialDriver?>(null)
     val selectedDriver: StateFlow<UsbSerialDriver?> = _selectedDriver
 
@@ -164,6 +173,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         val mac = connectedMac ?: run {
+            _releasesError.value = "Connect and identify a device before linking a repo"
             logToSession("Connect and identify a device before linking a repo")
             return
         }
@@ -274,6 +284,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 _boundRepo.value = profile?.gitRepo
                 _releases.value = emptyList()
                 _connectionStatus.value = ConnectionStatus.Identified(identity, loadedProfile = profile != null)
+                _connectedEvent.tryEmit(Unit)
             } catch (e: Exception) {
                 _connectionStatus.value = ConnectionStatus.Failed(e.message ?: "Connection failed")
             }

@@ -33,6 +33,7 @@ import com.espotg.app.BuildConfig
 import com.espotg.app.ui.AppViewModel
 import com.espotg.app.ui.ConnectionStatus
 import com.espotg.app.ui.components.LogConsole
+import com.espotg.app.ui.components.MenuIcon
 import com.hoho.android.usbserial.driver.UsbSerialDriver
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -40,8 +41,7 @@ import com.hoho.android.usbserial.driver.UsbSerialDriver
 fun ConnectScreen(
     appViewModel: AppViewModel,
     onConnected: () -> Unit,
-    onOpenProfiles: () -> Unit,
-    onOpenMonitor: () -> Unit,
+    onOpenDrawer: () -> Unit,
 ) {
     val drivers by appViewModel.usbRepository.availableDrivers.collectAsStateWithLifecycle()
     val status by appViewModel.connectionStatus.collectAsStateWithLifecycle()
@@ -49,13 +49,16 @@ fun ConnectScreen(
     val logs by appViewModel.sessionLogs.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) { appViewModel.refreshDevices() }
-    LaunchedEffect(status) {
-        if (status is ConnectionStatus.Identified) onConnected()
+    // Navigate to Flash only on a fresh successful connect, not whenever this
+    // screen is shown while already connected (which would bounce back instantly).
+    LaunchedEffect(Unit) {
+        appViewModel.connectedEvent.collect { onConnected() }
     }
 
     Scaffold(
         topBar = {
             TopAppBar(
+                navigationIcon = { MenuIcon(onOpenDrawer) },
                 title = {
                     Row(verticalAlignment = Alignment.Bottom) {
                         Text("EspOtg")
@@ -66,10 +69,6 @@ fun ConnectScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                },
-                actions = {
-                    TextButton(onClick = onOpenMonitor) { Text("Monitor") }
-                    TextButton(onClick = onOpenProfiles) { Text("Profiles") }
                 },
             )
         },
